@@ -8,6 +8,11 @@ import { LeadsModule } from './modules/leads/leads.module';
 import { BusinessesModule } from './modules/businesses/businesses.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
+import { CampaignsModule } from './modules/campaigns/campaigns.module';
+import { AiModule } from './modules/ai/ai.module';
+import { EmailSequencesModule } from './modules/email-sequences/email-sequences.module';
+import { BillingModule } from './modules/billing/billing.module';
+import { ApprovalsModule } from './modules/approvals/approvals.module';
 
 @Module({
   imports: [
@@ -32,13 +37,15 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
     LeadsModule,
     BusinessesModule,
     WebhooksModule,
+    CampaignsModule,
+    AiModule,
+    EmailSequencesModule,
+    BillingModule,
+    ApprovalsModule,
     // OutreachModule,
-    // BillingModule,
-    // ApprovalsModule,
-    // CampaignsModule,
     // NotificationsModule,
   ],
   controllers: [HealthController],
   providers: [],
 })
-export class AppModule {}
+export class AppModule { }

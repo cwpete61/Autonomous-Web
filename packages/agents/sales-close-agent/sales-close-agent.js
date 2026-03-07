@@ -18,9 +18,9 @@ Approach:
 - Use social proof from similar industries
 
 Packages:
-- Starter ($997): 3-page site, mobile responsive, basic SEO
-- Professional ($1,997): 5-page site, custom design, SEO, Google Business optimization
-- Premium ($3,497): 8+ page site, premium design, full SEO, content writing, ongoing support
+- Starter ($748, normally $997 — 25% off): 5-page site, mobile responsive, basic SEO, contact form
+- Professional ($1,498, normally $1,997 — 25% off): 15-page site, custom design, SEO, Google Business optimization, analytics
+- Premium ($2,623, normally $3,497 — 25% off): 30-page site, premium design, full SEO, content writing, ongoing support, priority revisions
 
 Return JSON:
 {
@@ -33,9 +33,9 @@ Return JSON:
 }`;
 
 const PRICING = {
-    starter: { name: 'Starter', price: 997, pages: 3, features: ['Mobile responsive', 'Basic SEO', 'Contact form'] },
-    professional: { name: 'Professional', price: 1997, pages: 5, features: ['Custom design', 'Full SEO', 'Google Business optimization', 'Analytics setup'] },
-    premium: { name: 'Premium', price: 3497, pages: 8, features: ['Premium design', 'Full SEO', 'Content writing', 'Ongoing support', 'Priority revisions'] },
+    starter: { name: 'Starter', price: 748, regularPrice: 997, pages: 5, features: ['Mobile responsive', 'Basic SEO', 'Contact form'] },
+    professional: { name: 'Professional', price: 1498, regularPrice: 1997, pages: 15, features: ['Custom design', 'Full SEO', 'Google Business optimization', 'Analytics setup'] },
+    premium: { name: 'Premium', price: 2623, regularPrice: 3497, pages: 30, features: ['Premium design', 'Full SEO', 'Content writing', 'Ongoing support', 'Priority revisions'] },
 };
 
 class SalesCloseAgent {

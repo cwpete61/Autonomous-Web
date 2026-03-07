@@ -288,6 +288,7 @@ export default function Dashboard() {
     isScheduled: false,
     scheduledDate: ''
   });
+  const [isWizard, setIsWizard] = useState(true);
   const [selectedLeadId, setSelectedLeadId] = useState(null);
   const [expandedLeadId, setExpandedLeadId] = useState(null);
   const [crmActiveTab, setCrmActiveTab] = useState('details');
@@ -303,6 +304,28 @@ export default function Dashboard() {
   const [importLocationsError, setImportLocationsError] = useState(null);
   const [isSystemAccordionOpen, setIsSystemAccordionOpen] = useState(false);
   const [isLocationsAccordionOpen, setIsLocationsAccordionOpen] = useState(false);
+
+  // ─── Email Sequences State ────────────────────────────────────────
+  const blankEmailStep = (step) => ({ step, subject: '', body: '', delayDays: step === 1 ? 0 : 3 });
+  const blankSequence = () => ({ name: '', steps: 3, emails: [blankEmailStep(1), blankEmailStep(2), blankEmailStep(3)], assignedCampaignId: null });
+  const [emailSequences, setEmailSequences] = useState([]);
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+  const [editingSequenceId, setEditingSequenceId] = useState(null);
+  const [newSequence, setNewSequence] = useState(blankSequence());
+  const [activeEmailStep, setActiveEmailStep] = useState(1);
+
+  // ─── AI Generation State ─────────────────────────────────────────
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiGenError, setAiGenError] = useState(null);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiInputs, setAiInputs] = useState({
+    industry: '',
+    pain_point_signal: '',
+    primary_outcome: '',
+    secondary_outcome: '',
+    sender_name: '',
+    sender_company: 'Orbis Outreach',
+  });
 
   useEffect(() => {
     // Force mount immediately to avoid getting stuck
@@ -429,29 +452,64 @@ export default function Dashboard() {
     }
   };
 
-  const addCampaign = () => {
+  const addCampaign = async () => {
     if (!newCampaign?.name) return;
+
+    const colors = ['#6366f1', '#8b5cf6', '#a855f7', '#f59e0b', '#22c55e', '#06b6d4'];
+    const campaignStatus = newCampaign.isScheduled ? 'scheduled' : 'queued';
 
     if (editingCampaignId) {
       // Update existing
-      const nextCampaigns = campaigns.map(c => c.id === editingCampaignId ? { ...newCampaign } : c);
+      const updated = { ...newCampaign, status: newCampaign.isScheduled ? 'scheduled' : newCampaign.status };
+      const nextCampaigns = campaigns.map(c => c.id === editingCampaignId ? updated : c);
       setCampaigns(nextCampaigns);
       if (typeof window !== 'undefined') localStorage.setItem('orbis_campaigns', JSON.stringify(nextCampaigns));
     } else {
-      // Create new
-      const colors = ['#6366f1', '#8b5cf6', '#a855f7', '#f59e0b', '#22c55e', '#06b6d4'];
+      // Create new — always goes to job queue first
       const campaign = {
         id: `cp${Date.now()}`,
         ...newCampaign,
         leads: 0,
         sent: 0,
         replies: 0,
-        status: newCampaign.isScheduled ? 'scheduled' : 'active',
-        color: colors[Math.floor(Math.random() * colors.length)]
+        // 'queued' = immediate run pending, 'scheduled' = time-gated
+        status: campaignStatus,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        createdAt: new Date().toISOString(),
       };
       const nextCampaigns = [campaign, ...campaigns];
       setCampaigns(nextCampaigns);
       if (typeof window !== 'undefined') localStorage.setItem('orbis_campaigns', JSON.stringify(nextCampaigns));
+
+      // POST to backend API (non-blocking — best-effort sync)
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+        await fetch(`${apiUrl}/campaigns`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: campaign.name,
+            niche: campaign.industry?.label || 'General',
+            geography: [
+              campaign.geography?.city,
+              campaign.geography?.state
+            ].filter(Boolean).join(', ') || 'All',
+            sourceConfig: {
+              targetCount: campaign.targetCount,
+              services: campaign.services,
+              industry: campaign.industry,
+              geography: campaign.geography,
+            },
+            thresholds: { targetCount: campaign.targetCount },
+            status: campaignStatus === 'queued' ? 'ACTIVE' : 'PAUSED',
+          }),
+        });
+      } catch (err) {
+        console.warn('[Campaign] API sync failed (offline?). Saved locally.', err);
+      }
+
+      // Auto-navigate to job queue so user sees their new job
+      handleViewChange('jobqueue');
     }
 
     setIsCampaignModalOpen(false);
@@ -468,6 +526,7 @@ export default function Dashboard() {
       isScheduled: false,
       scheduledDate: ''
     });
+    setIsWizard(true);
   };
 
   const handleImportCategories = () => {
@@ -662,7 +721,75 @@ export default function Dashboard() {
     }
   };
 
+  // ─── Email Sequence Handlers ─────────────────────────────────────
+  const handleSequenceStepCountChange = (count) => {
+    const emails = Array.from({ length: count }, (_, i) =>
+      newSequence.emails[i] || blankEmailStep(i + 1)
+    );
+    setNewSequence(s => ({ ...s, steps: count, emails }));
+    setActiveEmailStep(Math.min(activeEmailStep, count));
+  };
+
+  const handleEmailFieldChange = (stepIndex, field, value) => {
+    setNewSequence(s => {
+      const emails = s.emails.map((e, i) => i === stepIndex ? { ...e, [field]: value } : e);
+      return { ...s, emails };
+    });
+  };
+
+  const saveEmailSequence = () => {
+    if (!newSequence.name) return;
+    if (editingSequenceId) {
+      setEmailSequences(prev => prev.map(s => s.id === editingSequenceId ? { ...newSequence, id: editingSequenceId } : s));
+    } else {
+      setEmailSequences(prev => [{ ...newSequence, id: `eq${Date.now()}`, createdAt: new Date().toISOString() }, ...prev]);
+    }
+    setIsEmailModalOpen(false);
+    setEditingSequenceId(null);
+    setNewSequence(blankSequence());
+    setActiveEmailStep(1);
+  };
+
+  const deleteEmailSequence = (id) => {
+    if (window.confirm('Delete this email sequence?')) {
+      setEmailSequences(prev => prev.filter(s => s.id !== id));
+    }
+  };
+
+  const assignSequenceToCampaign = (sequenceId, campaignId) => {
+    setEmailSequences(prev => prev.map(s =>
+      s.id === sequenceId ? { ...s, assignedCampaignId: campaignId || null } : s
+    ));
+  };
+
+  const generateEmailsWithAI = async () => {
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    setAiGenerating(true);
+    setAiGenError(null);
+    try {
+      const res = await fetch(`${API_URL}/ai/generate-emails`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...aiInputs, step_count: newSequence.steps }),
+      });
+      if (!res.ok) throw new Error(`API error ${res.status}`);
+      const data = await res.json();
+      setNewSequence(s => ({
+        ...s,
+        emails: s.emails.map((e, i) => {
+          const key = `email_${i + 1}`;
+          return data[key] ? { ...e, subject: data[key].subject, body: data[key].body } : e;
+        }),
+      }));
+    } catch (err) {
+      setAiGenError(err.message || 'Generation failed. Check ANTHROPIC_API_KEY in API settings.');
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
   const t = isDark ? {
+
     bg: '#020817', card: '#0f172a', cardHover: '#1e293b', text: '#f1f5f9', textSecondary: '#94a3b8', textMuted: '#64748b',
     border: 'rgba(99,102,241,0.15)', borderSubtle: 'rgba(99,102,241,0.1)', borderFaint: 'rgba(99,102,241,0.05)',
     headerBg: 'rgba(2,8,23,0.9)', codeBg: 'rgba(2,8,23,0.5)', gridLine: '#1e293b', barBg: '#1e293b',
@@ -682,18 +809,18 @@ export default function Dashboard() {
 
   return (
     <div style={{ minHeight: '100vh', background: t.bg, color: t.text, fontFamily: "'Inter', system-ui, sans-serif", transition: 'background 0.3s, color 0.3s' }}>
-      <header style={{ padding: '16px 24px', borderBottom: `1px solid ${t.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: t.headerBg, backdropFilter: 'blur(12px)', position: 'sticky', top: 0, zIndex: 100 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ width: 32, height: 32, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem' }}>◉</div>
-          <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: '1.2rem' }}>Orbis Outreach</span>
+      <header style={{ padding: 'clamp(14px, 1.5vw, 22px) clamp(20px, 2.5vw, 36px)', borderBottom: `1px solid ${t.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: t.headerBg, backdropFilter: 'blur(12px)', position: 'sticky', top: 0, zIndex: 100 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div style={{ width: 'clamp(32px, 3vw, 42px)', height: 'clamp(32px, 3vw, 42px)', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'clamp(0.9rem, 1.2vw, 1.2rem)' }}>◉</div>
+          <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 'clamp(1.1rem, 1.5vw, 1.5rem)' }}>Orbis Outreach</span>
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {['pipeline', 'agents', 'crm', 'campaigns', 'jobqueue', 'analytics', 'api', 'users', 'system'].map(view => (
-            <button key={view} onClick={() => handleViewChange(view)} style={{ padding: '6px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500, background: activeView === view ? 'rgba(99,102,241,0.2)' : 'transparent', color: activeView === view ? '#818cf8' : t.textMuted }}>
+        <div style={{ display: 'flex', gap: 'clamp(4px, 0.6vw, 10px)', alignItems: 'center', flexWrap: 'wrap' }}>
+          {['campaigns', 'emailcampaigns', 'jobqueue', 'agents', 'pipeline', 'crm', 'analytics', 'api', 'users', 'system'].map(view => (
+            <button key={view} onClick={() => handleViewChange(view)} style={{ padding: 'clamp(6px, 0.7vw, 10px) clamp(10px, 1.2vw, 20px)', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: 'clamp(0.72rem, 0.85vw, 1.05rem)', fontWeight: 600, letterSpacing: '0.03em', background: activeView === view ? 'rgba(99,102,241,0.2)' : 'transparent', color: activeView === view ? '#818cf8' : t.textMuted, transition: 'all 0.15s' }}>
               {view.toUpperCase()}
             </button>
           ))}
-          <button onClick={toggleTheme} style={{ padding: '6px', borderRadius: '6px', border: 'none', background: 'transparent', cursor: 'pointer' }}>{isDark ? '☀️' : '🌙'}</button>
+          <button onClick={toggleTheme} style={{ padding: 'clamp(6px, 0.7vw, 10px)', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 'clamp(1rem, 1.2vw, 1.4rem)' }}>{isDark ? '☀️' : '🌙'}</button>
         </div>
       </header>
 
@@ -785,32 +912,57 @@ export default function Dashboard() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
                   <span style={{ fontSize: '1.5rem', fontWeight: 800, letterSpacing: '0.02em' }}>Job Queue</span>
                   <div style={{ padding: '4px 12px', background: 'rgba(99,102,241,0.1)', color: '#818cf8', borderRadius: '16px', fontSize: '0.85rem', fontWeight: 700 }}>
-                    {safeCampaigns.filter(c => c.status === 'scheduled').length} Pending
+                    {safeCampaigns.filter(c => c.status === 'queued' || c.status === 'scheduled').length} Pending
                   </div>
                 </div>
 
-                {safeCampaigns.filter(c => c.status === 'scheduled').length === 0 ? (
-                  <div style={{ padding: '40px', textAlign: 'center', background: t.card, borderRadius: '16px', border: `1px dashed ${t.border}`, color: t.textMuted }}>
-                    No pending jobs in the queue.
+                {safeCampaigns.filter(c => c.status === 'queued' || c.status === 'scheduled').length === 0 ? (
+                  <div style={{ padding: '60px 40px', textAlign: 'center', background: t.card, borderRadius: '16px', border: `1px dashed ${t.border}`, color: t.textMuted }}>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '16px' }}>✅</div>
+                    <div style={{ fontWeight: 600, marginBottom: '8px' }}>Queue is empty</div>
+                    <div style={{ fontSize: '0.85rem' }}>Create a campaign to see it appear here before it runs.</div>
                   </div>
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
-                    {safeCampaigns.filter(c => c.status === 'scheduled').map(camp => (
-                      <div key={camp.id} style={{ padding: '24px', background: t.card, border: `2px dashed ${t.border}`, borderRadius: '12px', position: 'relative', transition: 'all 0.2s' }} onMouseEnter={e => e.currentTarget.style.borderColor = '#6366f1'} onMouseLeave={e => e.currentTarget.style.borderColor = t.border}>
-                        <button onClick={(e) => { e.stopPropagation(); handleDeleteCampaign(camp.id); }} style={{ position: 'absolute', top: '12px', right: '12px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '1.1rem', opacity: 0.5, transition: '0.2s' }} onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.5} title="Delete Job">🗑️</button>
-                        <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '8px', pr: '28px' }}>{camp.name}</div>
-                        <div style={{ padding: '4px 8px', background: 'rgba(99,102,241,0.1)', color: '#818cf8', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700, display: 'inline-block', marginBottom: '16px' }}>
-                          SCHEDULED
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+                    {safeCampaigns.filter(c => c.status === 'queued' || c.status === 'scheduled').map(camp => {
+                      const isQueued = camp.status === 'queued';
+                      return (
+                        <div key={camp.id} style={{ padding: '24px', background: t.card, border: `2px solid ${isQueued ? 'rgba(34,197,94,0.4)' : 'rgba(99,102,241,0.4)'}`, borderRadius: '16px', position: 'relative', transition: 'all 0.2s' }} onMouseEnter={e => e.currentTarget.style.borderColor = isQueued ? '#22c55e' : '#6366f1'} onMouseLeave={e => e.currentTarget.style.borderColor = isQueued ? 'rgba(34,197,94,0.4)' : 'rgba(99,102,241,0.4)'}>
+                          <button onClick={(e) => { e.stopPropagation(); handleDeleteCampaign(camp.id); }} style={{ position: 'absolute', top: '12px', right: '12px', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '1.1rem', opacity: 0.5, transition: '0.2s' }} onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.5} title="Remove from Queue">🗑️</button>
+
+                          <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '8px', paddingRight: '28px' }}>{camp.name}</div>
+                          <div style={{ fontSize: '0.75rem', color: t.textSecondary, marginBottom: '12px' }}>
+                            {camp.industry?.label || camp.niche} • {camp.geography?.city || (typeof camp.geography === 'string' ? camp.geography : 'Remote')}
+                          </div>
+
+                          <div style={{ padding: '12px', background: t.bg, borderRadius: '10px', border: `1px solid ${t.borderFaint}`, marginBottom: '16px' }}>
+                            {isQueued ? (
+                              <>
+                                <div style={{ fontSize: '0.7rem', color: t.textMuted, marginBottom: '4px' }}>STATUS</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#22c55e' }}>
+                                  <span>🚀</span>
+                                  <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>Ready to run immediately</span>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div style={{ fontSize: '0.7rem', color: t.textMuted, marginBottom: '4px' }}>LAUNCH TIME</div>
+                                <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{camp.scheduledDate?.replace('T', ' ') || 'Not set'}</div>
+                              </>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button onClick={() => handleUpdateCampaignStatus(camp.id, 'active')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: '#22c55e', color: '#fff', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, transition: '0.2s' }} onMouseEnter={e => e.currentTarget.style.background = '#16a34a'} onMouseLeave={e => e.currentTarget.style.background = '#22c55e'}>
+                              {isQueued ? 'Launch Now' : 'Launch Early'}
+                            </button>
+                            <button onClick={() => handleUpdateCampaignStatus(camp.id, 'stopped')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid #ef4444`, background: 'transparent', color: '#ef4444', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, transition: '0.2s' }}>
+                              Cancel
+                            </button>
+                          </div>
                         </div>
-                        <div style={{ padding: '16px', background: t.bg, borderRadius: '10px', border: `1px solid ${t.borderFaint}`, marginBottom: '20px' }}>
-                          <div style={{ fontSize: '0.7rem', color: t.textMuted, marginBottom: '4px' }}>LAUNCH TIME</div>
-                          <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{camp.scheduledDate?.replace('T', ' ')}</div>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button onClick={() => handleUpdateCampaignStatus(camp.id, 'active')} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: '#6366f1', color: '#fff', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, transition: '0.2s' }} onMouseEnter={e => e.currentTarget.style.background = '#4f46e5'} onMouseLeave={e => e.currentTarget.style.background = '#6366f1'}>Launch Now</button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -840,7 +992,7 @@ export default function Dashboard() {
                     }} style={{ padding: '10px 20px', background: '#6366f1', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>+ New Campaign</button>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
-                    {safeCampaigns.filter(c => c.status !== 'scheduled').map(camp => (
+                    {safeCampaigns.filter(c => c.status !== 'queued' && c.status !== 'scheduled').map(camp => (
                       <div key={camp.id} style={{ padding: '24px', background: t.card, border: `1px solid ${t.border}`, borderRadius: '12px', transition: 'all 0.2s', position: 'relative' }} onMouseEnter={e => e.currentTarget.style.borderColor = '#6366f1'} onMouseLeave={e => e.currentTarget.style.borderColor = t.border}>
                         <button onClick={(e) => { e.stopPropagation(); handleDeleteCampaign(camp.id); }} style={{ position: 'absolute', top: '12px', right: '12px', background: 'transparent', border: 'none', cursor: 'pointer', opacity: 0.5, transition: '0.2s' }} onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0.5}>🗑️</button>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px', paddingRight: '24px' }}>
@@ -897,6 +1049,301 @@ export default function Dashboard() {
                       setModalStep(1);
                       setIsCampaignModalOpen(true);
                     }} style={{ padding: '24px', border: `2px dashed ${t.border}`, background: 'transparent', borderRadius: '12px', color: t.textMuted, cursor: 'pointer', minHeight: '200px' }}>+ Create New Campaign</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ─── EMAIL CAMPAIGNS VIEW ─────────────────────────────────── */}
+            {activeView === 'emailcampaigns' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                {/* Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 800, letterSpacing: '0.02em' }}>Email Campaigns</div>
+                    <div style={{ fontSize: '0.85rem', color: t.textMuted, marginTop: '4px' }}>Build multi-step email sequences and assign them to outreach campaigns.</div>
+                  </div>
+                  <button onClick={() => { setEditingSequenceId(null); setNewSequence(blankSequence()); setActiveEmailStep(1); setIsEmailModalOpen(true); }} style={{ padding: '10px 20px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem', boxShadow: '0 4px 14px rgba(99,102,241,0.3)' }}>
+                    ✉️ New Email Sequence
+                  </button>
+                </div>
+
+                {/* Stats row */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+                  {[
+                    { label: 'Total Sequences', value: emailSequences.length, icon: '📋', color: '#6366f1' },
+                    { label: 'Assigned to Campaigns', value: emailSequences.filter(s => s.assignedCampaignId).length, icon: '🔗', color: '#22c55e' },
+                    { label: 'Unassigned', value: emailSequences.filter(s => !s.assignedCampaignId).length, icon: '⏳', color: '#f59e0b' },
+                  ].map((s, i) => (
+                    <div key={i} style={{ padding: '20px', background: t.card, border: `1px solid ${t.border}`, borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div style={{ fontSize: '2rem' }}>{s.icon}</div>
+                      <div>
+                        <div style={{ fontSize: '0.78rem', color: t.textMuted }}>{s.label}</div>
+                        <div style={{ fontSize: '1.8rem', fontWeight: 800, color: s.color }}>{s.value}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Sequence list */}
+                {emailSequences.length === 0 ? (
+                  <div style={{ padding: '60px 40px', textAlign: 'center', background: t.card, borderRadius: '16px', border: `2px dashed ${t.border}`, color: t.textMuted }}>
+                    <div style={{ fontSize: '3rem', marginBottom: '16px' }}>✉️</div>
+                    <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '8px' }}>No Email Sequences Yet</div>
+                    <div style={{ fontSize: '0.85rem', marginBottom: '24px' }}>Create a sequence of 1–5 emails, then assign it to any outreach campaign.</div>
+                    <button onClick={() => { setEditingSequenceId(null); setNewSequence(blankSequence()); setActiveEmailStep(1); setIsEmailModalOpen(true); }} style={{ padding: '12px 28px', background: '#6366f1', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 700 }}>
+                      Create First Sequence
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {emailSequences.map(seq => {
+                      const assignedCamp = safeCampaigns.find(c => c.id === seq.assignedCampaignId);
+                      return (
+                        <div key={seq.id} style={{ padding: '24px', background: t.card, border: `1px solid ${t.border}`, borderRadius: '16px', transition: 'border-color 0.2s' }} onMouseEnter={e => e.currentTarget.style.borderColor = '#6366f1'} onMouseLeave={e => e.currentTarget.style.borderColor = t.border}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px' }}>
+                            {/* Left — name + step pills */}
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                                <div style={{ fontWeight: 800, fontSize: '1.05rem' }}>{seq.name}</div>
+                                <div style={{ padding: '3px 10px', background: 'rgba(99,102,241,0.12)', color: '#818cf8', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700 }}>
+                                  {seq.emails.length} Email{seq.emails.length > 1 ? 's' : ''}
+                                </div>
+                              </div>
+                              {/* Step previews */}
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {seq.emails.map((email, i) => (
+                                  <div key={i} style={{ padding: '8px 12px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', minWidth: '160px' }}>
+                                    <div style={{ fontSize: '0.65rem', color: t.textMuted, marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                      Email {i + 1}{i > 0 ? ` · Day ${email.delayDays}` : ' · Send immediately'}
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px' }}>
+                                      {email.subject || <span style={{ color: t.textMuted, fontStyle: 'italic' }}>No subject</span>}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Right — assignment + actions */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '12px', minWidth: '240px' }}>
+                              {/* Campaign assignment dropdown */}
+                              <div style={{ width: '100%' }}>
+                                <div style={{ fontSize: '0.7rem', color: t.textMuted, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Assigned Campaign</div>
+                                <select
+                                  value={seq.assignedCampaignId || ''}
+                                  onChange={e => assignSequenceToCampaign(seq.id, e.target.value)}
+                                  style={{ width: '100%', padding: '8px 12px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text, fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
+                                >
+                                  <option value=''>— Unassigned —</option>
+                                  {safeCampaigns.map(c => (
+                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              {assignedCamp && (
+                                <div style={{ padding: '6px 12px', background: 'rgba(34,197,94,0.1)', color: '#22c55e', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 600, border: '1px solid rgba(34,197,94,0.2)', width: '100%', textAlign: 'center' }}>
+                                  ✓ Active in: {assignedCamp.name}
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                                <button onClick={() => {
+                                  setEditingSequenceId(seq.id);
+                                  setNewSequence({ ...seq, emails: seq.emails.map(e => ({ ...e })) });
+                                  setActiveEmailStep(1);
+                                  setIsEmailModalOpen(true);
+                                }} style={{ flex: 1, padding: '8px', background: 'transparent', border: `1px solid ${t.border}`, borderRadius: '8px', color: t.textSecondary, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
+                                  ✏️ Edit
+                                </button>
+                                <button onClick={() => deleteEmailSequence(seq.id)} style={{ flex: 1, padding: '8px', background: 'transparent', border: '1px solid #ef444440', borderRadius: '8px', color: '#ef4444', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
+                                  🗑️ Delete
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ─── EMAIL SEQUENCE MODAL ─────────────────────────────────── */}
+            {isEmailModalOpen && (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '24px' }}>
+                <div style={{ background: t.card, borderRadius: '20px', width: '100%', maxWidth: '860px', maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 40px 80px rgba(0,0,0,0.5)', border: `1px solid ${t.border}` }}>
+                  {/* Modal Header */}
+                  <div style={{ padding: '24px 28px', borderBottom: `1px solid ${t.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.06))' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: '1.2rem' }}>{editingSequenceId ? '✏️ Edit Email Sequence' : '✉️ New Email Sequence'}</div>
+                      <div style={{ fontSize: '0.8rem', color: t.textMuted, marginTop: '2px' }}>Define up to 5 emails with subject, body, and send timing.</div>
+                    </div>
+                    <button onClick={() => { setIsEmailModalOpen(false); setEditingSequenceId(null); }} style={{ background: 'transparent', border: 'none', color: t.textMuted, cursor: 'pointer', fontSize: '1.5rem', lineHeight: 1 }}>✕</button>
+                  </div>
+
+                  <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+                    {/* Left panel — meta + step tabs */}
+                    <div style={{ width: '240px', borderRight: `1px solid ${t.border}`, padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto', background: t.bg }}>
+                      {/* Sequence name */}
+                      <div>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>Sequence Name</label>
+                        <input
+                          value={newSequence.name}
+                          onChange={e => setNewSequence(s => ({ ...s, name: e.target.value }))}
+                          placeholder='e.g. Home Service Cold Outreach'
+                          style={{ width: '100%', padding: '10px 12px', background: t.card, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text, fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }}
+                        />
+                      </div>
+
+                      {/* Number of emails — 3 to 5 */}
+                      <div>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>Email Count (3–5)</label>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                          {[3, 4, 5].map(n => (
+                            <button key={n} onClick={() => handleSequenceStepCountChange(n)} style={{ padding: '10px 0', borderRadius: '8px', border: `2px solid ${newSequence.steps === n ? '#6366f1' : t.borderSubtle}`, background: newSequence.steps === n ? 'rgba(99,102,241,0.15)' : 'transparent', color: newSequence.steps === n ? '#818cf8' : t.textMuted, fontWeight: 700, cursor: 'pointer', fontSize: '0.9rem', transition: 'all 0.15s' }}>
+                              {n}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* ✨ AI Generate Panel */}
+                      <div style={{ borderRadius: '10px', border: `1px solid ${aiPanelOpen ? '#6366f1' : t.borderSubtle}`, overflow: 'hidden', transition: 'border-color 0.2s' }}>
+                        <button onClick={() => setAiPanelOpen(p => !p)} style={{ width: '100%', padding: '10px 14px', background: aiPanelOpen ? 'rgba(99,102,241,0.1)' : 'transparent', border: 'none', color: aiPanelOpen ? '#818cf8' : t.textSecondary, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 700, fontSize: '0.82rem' }}>
+                          <span>✨ Generate with AI</span>
+                          <span style={{ fontSize: '0.65rem', opacity: 0.7 }}>{aiPanelOpen ? '▲' : '▼'}</span>
+                        </button>
+                        {aiPanelOpen && (
+                          <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '10px', borderTop: `1px solid ${t.borderSubtle}` }}>
+                            {[['industry', 'Industry', 'e.g. HVAC, Dental, Roofing'], ['pain_point_signal', 'Pain Point', 'e.g. poor website visibility'], ['primary_outcome', 'Primary Outcome', 'e.g. more leads from Google'], ['secondary_outcome', 'Secondary Outcome (opt.)', 'e.g. save on marketing costs'], ['sender_name', 'Your Name', 'e.g. Alex Smith'], ['sender_company', 'Company', 'Orbis Outreach']].map(([field, label, placeholder]) => (
+                              <div key={field}>
+                                <label style={{ fontSize: '0.68rem', fontWeight: 600, color: t.textMuted, display: 'block', marginBottom: '3px' }}>{label}</label>
+                                <input
+                                  value={aiInputs[field]}
+                                  onChange={e => setAiInputs(prev => ({ ...prev, [field]: e.target.value }))}
+                                  placeholder={placeholder}
+                                  style={{ width: '100%', padding: '7px 10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '6px', color: t.text, fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box' }}
+                                />
+                              </div>
+                            ))}
+                            {aiGenError && <div style={{ fontSize: '0.72rem', color: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', padding: '8px 10px', borderRadius: '6px' }}>{aiGenError}</div>}
+                            <button
+                              onClick={generateEmailsWithAI}
+                              disabled={aiGenerating || !aiInputs.industry || !aiInputs.pain_point_signal || !aiInputs.primary_outcome}
+                              style={{ padding: '10px', borderRadius: '8px', border: 'none', background: aiGenerating ? t.borderSubtle : 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: aiGenerating ? t.textMuted : '#fff', cursor: aiGenerating ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.82rem', transition: 'all 0.2s', boxShadow: aiGenerating ? 'none' : '0 3px 10px rgba(99,102,241,0.35)' }}
+                            >
+                              {aiGenerating ? `⏳ Generating ${newSequence.steps} emails…` : `✨ Generate ${newSequence.steps} Emails`}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Step navigation */}
+                      <div>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>Steps</label>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {newSequence.emails.map((email, i) => (
+                            <button key={i} onClick={() => setActiveEmailStep(i + 1)} style={{ padding: '10px 12px', borderRadius: '8px', border: `1px solid ${activeEmailStep === i + 1 ? '#6366f1' : t.borderSubtle}`, background: activeEmailStep === i + 1 ? 'rgba(99,102,241,0.1)' : 'transparent', color: activeEmailStep === i + 1 ? '#818cf8' : t.textSecondary, cursor: 'pointer', textAlign: 'left', fontSize: '0.82rem', fontWeight: activeEmailStep === i + 1 ? 700 : 500 }}>
+                              <div>Email {i + 1}</div>
+                              <div style={{ fontSize: '0.7rem', color: t.textMuted, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {email.subject || 'No subject yet'}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Campaign assignment */}
+                      <div>
+                        <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>Assign to Campaign</label>
+                        <select
+                          value={newSequence.assignedCampaignId || ''}
+                          onChange={e => setNewSequence(s => ({ ...s, assignedCampaignId: e.target.value || null }))}
+                          style={{ width: '100%', padding: '10px 12px', background: t.card, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text, fontSize: '0.82rem', outline: 'none', cursor: 'pointer', boxSizing: 'border-box' }}
+                        >
+                          <option value=''>— None —</option>
+                          {safeCampaigns.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Right panel — email editor */}
+                    <div style={{ flex: 1, padding: '28px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                      {newSequence.emails.map((email, i) => activeEmailStep === i + 1 && (
+                        <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingBottom: '16px', borderBottom: `1px solid ${t.borderSubtle}` }}>
+                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: '0.9rem' }}>{i + 1}</div>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: '1rem' }}>Email {i + 1}</div>
+                              <div style={{ fontSize: '0.78rem', color: t.textMuted }}>{i === 0 ? 'Sent immediately when campaign launches' : `Sent ${email.delayDays} day${email.delayDays !== 1 ? 's' : ''} after previous email`}</div>
+                            </div>
+                          </div>
+
+                          {/* Delay (for steps > 1) */}
+                          {i > 0 && (
+                            <div>
+                              <label style={{ fontSize: '0.78rem', fontWeight: 700, color: t.textSecondary, display: 'block', marginBottom: '6px' }}>Send delay (days after previous email)</label>
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                {[1, 2, 3, 5, 7, 10, 14].map(d => (
+                                  <button key={d} onClick={() => handleEmailFieldChange(i, 'delayDays', d)} style={{ padding: '8px 14px', borderRadius: '8px', border: `1px solid ${email.delayDays === d ? '#6366f1' : t.borderSubtle}`, background: email.delayDays === d ? 'rgba(99,102,241,0.12)' : 'transparent', color: email.delayDays === d ? '#818cf8' : t.textSecondary, cursor: 'pointer', fontWeight: 600, fontSize: '0.82rem', transition: '0.15s' }}>
+                                    +{d}d
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Subject line */}
+                          <div>
+                            <label style={{ fontSize: '0.78rem', fontWeight: 700, color: t.textSecondary, display: 'block', marginBottom: '6px' }}>Subject Line</label>
+                            <input
+                              value={email.subject}
+                              onChange={e => handleEmailFieldChange(i, 'subject', e.target.value)}
+                              placeholder='e.g. Quick question about your website...'
+                              style={{ width: '100%', padding: '12px 14px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+                            />
+                            <div style={{ fontSize: '0.7rem', color: email.subject.length > 50 ? '#ef4444' : t.textMuted, marginTop: '4px', textAlign: 'right' }}>{email.subject.length}/50 chars recommended</div>
+                          </div>
+
+                          {/* Body */}
+                          <div>
+                            <label style={{ fontSize: '0.78rem', fontWeight: 700, color: t.textSecondary, display: 'block', marginBottom: '6px' }}>Email Body</label>
+                            <textarea
+                              value={email.body}
+                              onChange={e => handleEmailFieldChange(i, 'body', e.target.value)}
+                              placeholder={'Hi {{first_name}},\n\nI came across {{business_name}} while looking at local businesses in {{city}}...\n\n[Your personalized message here]\n\nBest,\n{{agent_name}}'}
+                              rows={12}
+                              style={{ width: '100%', padding: '14px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, fontSize: '0.85rem', fontFamily: "'Inter', monospace", outline: 'none', resize: 'vertical', boxSizing: 'border-box', lineHeight: 1.6 }}
+                            />
+                            <div style={{ fontSize: '0.7rem', color: t.textMuted, marginTop: '4px' }}>
+                              Available variables: <code style={{ background: t.borderFaint, padding: '1px 5px', borderRadius: '3px' }}>{'{{first_name}}'}</code> <code style={{ background: t.borderFaint, padding: '1px 5px', borderRadius: '3px' }}>{'{{business_name}}'}</code> <code style={{ background: t.borderFaint, padding: '1px 5px', borderRadius: '3px' }}>{'{{city}}'}</code> <code style={{ background: t.borderFaint, padding: '1px 5px', borderRadius: '3px' }}>{'{{agent_name}}'}</code>
+                            </div>
+                          </div>
+
+                          {/* Navigate steps */}
+                          <div style={{ display: 'flex', gap: '10px', paddingTop: '8px' }}>
+                            {i > 0 && <button onClick={() => setActiveEmailStep(i)} style={{ padding: '10px 20px', background: 'transparent', border: `1px solid ${t.border}`, borderRadius: '8px', color: t.textSecondary, cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>← Previous Email</button>}
+                            {i < newSequence.steps - 1 && <button onClick={() => setActiveEmailStep(i + 2)} style={{ padding: '10px 20px', background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '8px', color: '#818cf8', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>Next Email →</button>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Modal Footer */}
+                  <div style={{ padding: '20px 28px', borderTop: `1px solid ${t.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: t.bg }}>
+                    <div style={{ fontSize: '0.82rem', color: t.textMuted }}>
+                      {newSequence.name ? `"${newSequence.name}" · ${newSequence.steps} email${newSequence.steps > 1 ? 's' : ''}` : 'Name your sequence to save it'}
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px' }}>
+                      <button onClick={() => { setIsEmailModalOpen(false); setEditingSequenceId(null); }} style={{ padding: '10px 20px', background: 'transparent', border: `1px solid ${t.border}`, borderRadius: '10px', color: t.textSecondary, cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                      <button onClick={saveEmailSequence} disabled={!newSequence.name} style={{ padding: '10px 24px', background: newSequence.name ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : t.borderSubtle, color: newSequence.name ? '#fff' : t.textMuted, border: 'none', borderRadius: '10px', cursor: newSequence.name ? 'pointer' : 'not-allowed', fontWeight: 700, fontSize: '0.9rem', boxShadow: newSequence.name ? '0 4px 14px rgba(99,102,241,0.4)' : 'none', transition: 'all 0.2s' }}>
+                        {editingSequenceId ? '💾 Update Sequence' : '✉️ Save Sequence'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1349,203 +1796,269 @@ export default function Dashboard() {
       {
         isCampaignModalOpen && (
           <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(2,8,23,0.8)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setIsCampaignModalOpen(false)}>
-            <div style={{ padding: '32px', background: isDark ? '#1e293b' : '#fff', borderRadius: '24px', width: '550px', boxShadow: '0 20px 50px rgba(0,0,0,0.5)', border: `1px solid ${t.border}` }} onClick={e => e.stopPropagation()}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                <h2 style={{ margin: 0, fontSize: '1.5rem' }}>{editingCampaignId ? 'Edit Campaign' : 'Create Campaign'}</h2>
-                <div style={{ fontSize: '0.85rem', color: t.textMuted, fontWeight: 600 }}>Step {modalStep} of 5</div>
+            <div style={{ padding: '0', background: isDark ? '#0f172a' : '#fff', borderRadius: '24px', width: '900px', maxWidth: '95vw', height: 'auto', maxHeight: '90vh', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,0.5)', border: `1px solid ${t.border}`, display: 'flex' }} onClick={e => e.stopPropagation()}>
+
+              {/* Left Column: Form Section */}
+              <div style={{ flex: 1, padding: '32px', borderRight: `1px solid ${t.borderSubtle}`, display: 'flex', flexDirection: 'column', height: '90vh', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h2 style={{ margin: 0, fontSize: '1.5rem' }}>{editingCampaignId ? 'Edit Campaign' : 'Create Campaign'}</h2>
+                  <div style={{ display: 'flex', background: t.bg, borderRadius: '8px', padding: '2px' }}>
+                    <button onClick={() => setIsWizard(true)} style={{ padding: '6px 12px', border: 'none', background: isWizard ? '#6366f1' : 'transparent', color: isWizard ? '#fff' : t.textMuted, borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: '0.2s' }}>Wizard</button>
+                    <button onClick={() => setIsWizard(false)} style={{ padding: '6px 12px', border: 'none', background: !isWizard ? '#6366f1' : 'transparent', color: !isWizard ? '#fff' : t.textMuted, borderRadius: '6px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', transition: '0.2s' }}>Standard</button>
+                  </div>
+                </div>
+                {isWizard && (
+                  <div style={{ fontSize: '0.85rem', color: t.textMuted, fontWeight: 600, marginBottom: '24px', textAlign: 'right' }}>Step {modalStep} of 4</div>
+                )}
+
+                <div style={{ flex: 1, overflowY: 'auto', paddingRight: '12px' }}>
+                  {(() => {
+                    const mergedIndustries = [
+                      ...(customCategories ? Object.keys(customCategories)
+                        .filter(cat => !['schema_version', 'metadata', 'categories'].includes(cat.toLowerCase()))
+                        .map(cat => ({
+                          id: cat,
+                          label: cat,
+                          services: customCategories[cat] || []
+                        })) : []),
+                      ...CAMPAIGN_DATA.industries.filter(ind => !customCategories || !customCategories[ind.label])
+                    ].sort((a, b) => a.label.localeCompare(b.label));
+
+                    const mergedGeography = buildGeoHierarchy([
+                      ...SYSTEM_LOCATIONS,
+                      ...(customLocations || [])
+                    ]);
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                        {isWizard && (
+                          <div style={{ height: '4px', background: t.borderSubtle, borderRadius: '2px', marginBottom: '8px', display: 'flex' }}>
+                            <div style={{ height: '100%', width: `${(modalStep / 4) * 100}%`, background: '#6366f1', borderRadius: '2px', transition: 'width 0.3s' }} />
+                          </div>
+                        )}
+
+                        {(isWizard ? modalStep === 1 : true) && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            {!isWizard && <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#6366f1' }}>STEP 1: IDENTITY</div>}
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 700, letterSpacing: '0.05em' }}>CAMPAIGN NAME</label>
+                              <input placeholder="e.g. Q2 Dental Outreach" value={newCampaign.name} onChange={e => setNewCampaign({ ...newCampaign, name: e.target.value })} style={{ width: '100%', padding: '14px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '12px', color: t.text, outline: 'none' }} />
+                            </div>
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                                <label style={{ fontSize: '0.75rem', color: t.textMuted, fontWeight: 700, letterSpacing: '0.05em' }}>TARGET LEAD COUNT ({newCampaign.targetCount})</label>
+                              </div>
+                              <input type="range" min="10" max="500" step="10" value={newCampaign.targetCount} onChange={e => setNewCampaign({ ...newCampaign, targetCount: parseInt(e.target.value) })} style={{ width: '100%', accentColor: '#6366f1' }} />
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.7rem', color: t.textMuted }}>
+                                <span>10</span>
+                                <span>500</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {(isWizard ? modalStep === 2 : true) && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            {!isWizard && <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#6366f1' }}>STEP 2: CATEGORY & SERVICES</div>}
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 700 }}>CATEGORY</label>
+                              <select value={newCampaign.industry?.id} onChange={e => {
+                                const selected = mergedIndustries.find(ind => ind.id === e.target.value);
+                                setNewCampaign({ ...newCampaign, industry: selected, services: [] });
+                              }} style={{ width: '100%', padding: '14px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '12px', color: t.text, outline: 'none' }}>
+                                <option value="">Select Category</option>
+                                {mergedIndustries.map(ind => <option key={ind.id} value={ind.id}>{ind.label}</option>)}
+                              </select>
+                            </div>
+                            {newCampaign.industry && (
+                              <div>
+                                <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>SERVICES (OPTIONAL)</label>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', maxHeight: '200px', overflowY: 'auto', padding: '4px' }}>
+                                  {newCampaign.industry.services.map(svc => {
+                                    const isSelected = newCampaign.services.includes(svc);
+                                    return (
+                                      <button key={svc} onClick={() => {
+                                        const next = isSelected ? newCampaign.services.filter(s => s !== svc) : [...newCampaign.services, svc];
+                                        setNewCampaign({ ...newCampaign, services: next });
+                                      }} style={{ padding: '6px 12px', borderRadius: '20px', fontSize: '0.75rem', border: `1px solid ${isSelected ? '#6366f1' : t.borderSubtle}`, background: isSelected ? 'rgba(99,102,241,0.1)' : 'transparent', color: isSelected ? '#818cf8' : t.textSecondary, cursor: 'pointer' }}>
+                                        {svc}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {(isWizard ? modalStep === 3 : true) && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            {!isWizard && <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#6366f1' }}>STEP 3: GEOGRAPHY</div>}
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 700 }}>STATE</label>
+                              <select value={newCampaign.geography?.state} onChange={e => setNewCampaign({ ...newCampaign, geography: { state: e.target.value, county: null, city: null } })} style={{ width: '100%', padding: '14px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '12px', color: t.text, outline: 'none' }}>
+                                <option value="">Select State</option>
+                                {mergedGeography.map(g => <option key={g.state} value={g.state}>{g.state}</option>)}
+                              </select>
+                            </div>
+                            {newCampaign.geography?.state && (
+                              <div>
+                                <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>COUNTY</label>
+                                <select value={newCampaign.geography?.county || ''} onChange={e => setNewCampaign({ ...newCampaign, geography: { ...newCampaign.geography, county: e.target.value, city: null } })} style={{ width: '100%', padding: '12px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, outline: 'none' }}>
+                                  <option value="">Select County</option>
+                                  {mergedGeography.find(g => g.state === newCampaign.geography.state)?.counties.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                                </select>
+                              </div>
+                            )}
+                            {newCampaign.geography?.county && (
+                              <div>
+                                <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>CITY</label>
+                                <select value={newCampaign.geography?.city || ''} onChange={e => setNewCampaign({ ...newCampaign, geography: { ...newCampaign.geography, city: e.target.value } })} style={{ width: '100%', padding: '12px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, outline: 'none' }}>
+                                  <option value="">Select City</option>
+                                  {mergedGeography.find(g => g.state === newCampaign.geography.state)?.counties.find(c => c.name === newCampaign.geography.county)?.cities.map(ct => <option key={ct} value={ct}>{ct}</option>)}
+                                </select>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {(isWizard ? modalStep === 4 : true) && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            {!isWizard && <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#6366f1' }}>STEP 4: SCHEDULING</div>}
+                            <div style={{ padding: '20px', background: t.bg, borderRadius: '16px', border: `1px solid ${t.borderSubtle}` }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                <div style={{ fontWeight: 600 }}>Schedule for later?</div>
+                                <div onClick={() => setNewCampaign({ ...newCampaign, isScheduled: !newCampaign.isScheduled })} style={{ width: 44, height: 24, background: newCampaign.isScheduled ? '#22c55e' : t.barBg, borderRadius: 12, cursor: 'pointer', position: 'relative', transition: '0.2s' }}>
+                                  <div style={{ width: 18, height: 18, background: '#fff', borderRadius: '50%', position: 'absolute', top: 3, left: newCampaign.isScheduled ? 23 : 3, transition: '0.2s' }} />
+                                </div>
+                              </div>
+                              {newCampaign.isScheduled && (
+                                <div style={{ marginTop: '20px' }}>
+                                  <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>LAUNCH DATE & TIME</label>
+                                  <input type="datetime-local" value={newCampaign.scheduledDate} onChange={e => setNewCampaign({ ...newCampaign, scheduledDate: e.target.value })} style={{ width: '100%', padding: '12px', background: t.card, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, outline: 'none' }} />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', marginTop: 'auto', paddingTop: '32px' }}>
+                  <button
+                    onClick={() => {
+                      if (isWizard && modalStep > 1) {
+                        setModalStep(modalStep - 1);
+                      } else {
+                        setIsCampaignModalOpen(false);
+                        setEditingCampaignId(null);
+                      }
+                    }}
+                    style={{ flex: 1, padding: '14px', borderRadius: '12px', border: `1px solid ${t.borderSubtle}`, background: 'transparent', color: t.textSecondary, cursor: 'pointer', fontWeight: 600 }}
+                  >
+                    {(isWizard && modalStep === 1) || !isWizard ? 'Cancel' : 'Back'}
+                  </button>
+
+                  {isWizard && modalStep < 4 ? (
+                    <button
+                      onClick={() => setModalStep(modalStep + 1)}
+                      disabled={
+                        (modalStep === 1 && !newCampaign.name) ||
+                        (modalStep === 2 && !newCampaign.industry) ||
+                        (modalStep === 3 && !newCampaign.geography?.state)
+                      }
+                      style={{
+                        flex: 2, padding: '14px', background: '#6366f1', color: '#fff', borderRadius: '12px', border: 'none', cursor: 'pointer', fontWeight: 600, opacity: (
+                          (modalStep === 1 && !newCampaign.name) ||
+                          (modalStep === 2 && !newCampaign.industry) ||
+                          (modalStep === 3 && !newCampaign.geography?.state)
+                        ) ? 0.5 : 1
+                      }}
+                    >
+                      Next
+                    </button>
+                  ) : (
+                    <button
+                      onClick={addCampaign}
+                      disabled={
+                        !newCampaign.name ||
+                        !newCampaign.industry ||
+                        !newCampaign.geography?.state ||
+                        (newCampaign.isScheduled && !newCampaign.scheduledDate)
+                      }
+                      style={{
+                        flex: 2, padding: '14px', background: '#22c55e', color: '#fff', borderRadius: '12px', border: 'none', cursor: 'pointer', fontWeight: 700, opacity: (
+                          !newCampaign.name ||
+                          !newCampaign.industry ||
+                          !newCampaign.geography?.state ||
+                          (newCampaign.isScheduled && !newCampaign.scheduledDate)
+                        ) ? 0.5 : 1
+                      }}
+                    >
+                      {editingCampaignId ? 'Update Campaign' : 'Create Campaign'}
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {(() => {
-                const mergedIndustries = [
-                  ...(customCategories ? Object.keys(customCategories)
-                    .filter(cat => !['schema_version', 'metadata', 'categories'].includes(cat.toLowerCase()))
-                    .map(cat => ({
-                      id: cat,
-                      label: cat,
-                      services: customCategories[cat] || []
-                    })) : []),
-                  ...CAMPAIGN_DATA.industries.filter(ind => !customCategories || !customCategories[ind.label])
-                ].sort((a, b) => a.label.localeCompare(b.label));
+              {/* Right Column: Persistent Summary Sidebar */}
+              <div style={{ width: '320px', background: isDark ? 'rgba(30,41,59,0.5)' : '#f8fafc', padding: '32px', display: 'flex', flexDirection: 'column', gap: '24px', overflowY: 'auto' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#6366f1', letterSpacing: '0.05em' }}>CAMPAIGN PREVIEW</div>
 
-                const mergedGeography = buildGeoHierarchy([
-                  ...SYSTEM_LOCATIONS,
-                  ...(customLocations || [])
-                ]);
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  <div style={{ padding: '20px', background: isDark ? '#1e293b' : '#fff', borderRadius: '16px', border: `1px solid ${t.border}`, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '16px', color: t.text }}>{newCampaign.name || 'Untitled Campaign'}</div>
 
-                return (
-                  <>
-                    <div style={{ height: '4px', background: t.borderSubtle, borderRadius: '2px', marginBottom: '32px', display: 'flex' }}>
-                      <div style={{ height: '100%', width: `${(modalStep / 5) * 100}%`, background: '#6366f1', borderRadius: '2px', transition: 'width 0.3s' }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                        <span style={{ color: t.textMuted }}>Target:</span>
+                        <span style={{ fontWeight: 600, color: '#6366f1' }}>{newCampaign.targetCount} leads</span>
+                      </div>
+
+                      <div style={{ height: '1px', background: t.borderSubtle }} />
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <span style={{ fontSize: '0.7rem', color: t.textMuted, fontWeight: 700, textTransform: 'uppercase' }}>Scope</span>
+                        <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{newCampaign.industry?.label || 'Not Selected'}</span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                          {newCampaign.services && newCampaign.services.length > 0 ? newCampaign.services.map(s => (
+                            <span key={s} style={{ fontSize: '0.65rem', padding: '2px 8px', background: 'rgba(99,102,241,0.1)', color: '#818cf8', borderRadius: '10px', border: '1px solid rgba(99,102,241,0.2)' }}>{s}</span>
+                          )) : <span style={{ fontSize: '0.75rem', color: t.textMuted, fontStyle: 'italic' }}>All Services</span>}
+                        </div>
+                      </div>
+
+                      <div style={{ height: '1px', background: t.borderSubtle }} />
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <span style={{ fontSize: '0.7rem', color: t.textMuted, fontWeight: 700, textTransform: 'uppercase' }}>Location</span>
+                        <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>
+                          {newCampaign.geography?.city ? `${newCampaign.geography.city}, ` : ''}
+                          {newCampaign.geography?.state || 'Selection Pending'}
+                        </span>
+                      </div>
+
+                      <div style={{ height: '1px', background: t.borderSubtle }} />
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <span style={{ fontSize: '0.7rem', color: t.textMuted, fontWeight: 700, textTransform: 'uppercase' }}>Launch</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: newCampaign.isScheduled ? '#f59e0b' : '#22c55e' }}>
+                          <span style={{ fontSize: '1rem' }}>{newCampaign.isScheduled ? '🕒' : '🚀'}</span>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{newCampaign.isScheduled ? (newCampaign.scheduledDate ? new Date(newCampaign.scheduledDate).toLocaleString() : 'Scheduling Required') : 'Immediate'}</span>
+                        </div>
+                      </div>
                     </div>
+                  </div>
 
-                    {modalStep === 1 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                        <div>
-                          <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>CAMPAIGN NAME</label>
-                          <input type="text" value={newCampaign.name} onChange={e => setNewCampaign({ ...newCampaign, name: e.target.value })} style={{ width: '100%', padding: '12px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, outline: 'none' }} placeholder="e.g. Q2 Dental Outreach" />
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>TARGET LEAD COUNT ({newCampaign.targetCount})</label>
-                          <input type="range" min="10" max="500" step="10" value={newCampaign.targetCount} onChange={e => setNewCampaign({ ...newCampaign, targetCount: parseInt(e.target.value) })} style={{ width: '100%', accentColor: '#6366f1' }} />
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: t.textMuted, marginTop: '4px' }}>
-                            <span>10</span>
-                            <span>500</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {modalStep === 2 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                        <div>
-                          <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>CATEGORY</label>
-                          <select
-                            value={newCampaign.industry?.id || ''}
-                            onChange={e => {
-                              const ind = mergedIndustries.find(i => i.id === e.target.value);
-                              setNewCampaign({ ...newCampaign, industry: ind, services: [] });
-                            }}
-                            style={{ width: '100%', padding: '12px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, outline: 'none' }}
-                          >
-                            <option value="">Select Category</option>
-                            {mergedIndustries.map(ind => (
-                              <option key={ind.id} value={ind.id}>{ind.label}</option>
-                            ))}
-                          </select>
-                        </div>
-                        {newCampaign.industry && (
-                          <div>
-                            <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>SERVICES (OPTIONAL)</label>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', maxHeight: '200px', overflowY: 'auto', padding: '4px' }}>
-                              {newCampaign.industry.services.map(svc => {
-                                const isSelected = newCampaign.services.includes(svc);
-                                return (
-                                  <button key={svc} onClick={() => {
-                                    const next = isSelected ? newCampaign.services.filter(s => s !== svc) : [...newCampaign.services, svc];
-                                    setNewCampaign({ ...newCampaign, services: next });
-                                  }} style={{ padding: '6px 12px', borderRadius: '20px', fontSize: '0.75rem', border: `1px solid ${isSelected ? '#6366f1' : t.borderSubtle}`, background: isSelected ? 'rgba(99,102,241,0.1)' : 'transparent', color: isSelected ? '#818cf8' : t.textSecondary, cursor: 'pointer' }}>
-                                    {svc}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {modalStep === 3 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                        <div>
-                          <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>STATE</label>
-                          <select value={newCampaign.geography?.state || ''} onChange={e => {
-                            setNewCampaign({ ...newCampaign, geography: { state: e.target.value, county: null, city: null } });
-                          }} style={{ width: '100%', padding: '12px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, outline: 'none' }}>
-                            <option value="">Select State</option>
-                            {mergedGeography.map(g => <option key={g.state} value={g.state}>{g.state}</option>)}
-                          </select>
-                        </div>
-                        {newCampaign.geography?.state && (
-                          <div>
-                            <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>COUNTY</label>
-                            <select value={newCampaign.geography?.county || ''} onChange={e => {
-                              setNewCampaign({ ...newCampaign, geography: { ...newCampaign.geography, county: e.target.value, city: null } });
-                            }} style={{ width: '100%', padding: '12px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, outline: 'none' }}>
-                              <option value="">Select County</option>
-                              {mergedGeography.find(g => g.state === newCampaign.geography.state)?.counties.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                            </select>
-                          </div>
-                        )}
-                        {newCampaign.geography?.county && (
-                          <div>
-                            <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>CITY</label>
-                            <select value={newCampaign.geography?.city || ''} onChange={e => {
-                              setNewCampaign({ ...newCampaign, geography: { ...newCampaign.geography, city: e.target.value } });
-                            }} style={{ width: '100%', padding: '12px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, outline: 'none' }}>
-                              <option value="">Select City</option>
-                              {mergedGeography.find(g => g.state === newCampaign.geography.state)?.counties.find(c => c.name === newCampaign.geography.county)?.cities.map(ct => <option key={ct} value={ct}>{ct}</option>)}
-                            </select>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {modalStep === 4 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                        <div style={{ padding: '20px', background: t.bg, borderRadius: '16px', border: `1px solid ${t.borderSubtle}` }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                            <div style={{ fontWeight: 600 }}>Schedule for later?</div>
-                            <div onClick={() => setNewCampaign({ ...newCampaign, isScheduled: !newCampaign.isScheduled })} style={{ width: 44, height: 24, background: newCampaign.isScheduled ? '#22c55e' : t.barBg, borderRadius: 12, cursor: 'pointer', position: 'relative', transition: '0.2s' }}>
-                              <div style={{ width: 18, height: 18, background: '#fff', borderRadius: '50%', position: 'absolute', top: 3, left: newCampaign.isScheduled ? 23 : 3, transition: '0.2s' }} />
-                            </div>
-                          </div>
-                          {newCampaign.isScheduled && (
-                            <div style={{ marginTop: '20px' }}>
-                              <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px', fontWeight: 600 }}>LAUNCH DATE & TIME</label>
-                              <input type="datetime-local" value={newCampaign.scheduledDate} onChange={e => setNewCampaign({ ...newCampaign, scheduledDate: e.target.value })} style={{ width: '100%', padding: '12px', background: t.card, border: `1px solid ${t.borderSubtle}`, borderRadius: '10px', color: t.text, outline: 'none' }} />
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ fontSize: '0.75rem', color: t.textMuted, fontStyle: 'italic', textAlign: 'center' }}>
-                          Scheduled campaigns will be held in the Job Queue until their launch time.
-                        </div>
-                      </div>
-                    )}
-
-                    {modalStep === 5 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                        <div style={{ padding: '20px', background: t.bg, borderRadius: '16px', border: `1px solid ${t.borderSubtle}` }}>
-                          <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '16px', color: '#6366f1' }}>CAMPAIGN SUMMARY</div>
-                          <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: '12px', fontSize: '0.8rem' }}>
-                            <span style={{ color: t.textMuted }}>Name:</span> <span style={{ fontWeight: 600 }}>{newCampaign.name}</span>
-                            <span style={{ color: t.textMuted }}>Target:</span> <span style={{ fontWeight: 600 }}>{newCampaign.targetCount} leads</span>
-                            <span style={{ color: t.textMuted }}>Category:</span> <span style={{ fontWeight: 600 }}>{newCampaign.industry?.label || 'N/A'}</span>
-                            <span style={{ color: t.textMuted }}>Services:</span> <span style={{ fontWeight: 600 }}>{newCampaign.services.join(', ') || 'All'}</span>
-                            <span style={{ color: t.textMuted }}>Location:</span> <span style={{ fontWeight: 600 }}>{newCampaign.geography?.city || 'Remote'}, {newCampaign.geography?.state || 'Anywhere'}</span>
-                            <span style={{ color: t.textMuted }}>Status:</span> <span style={{ fontWeight: 600 }}>{newCampaign.isScheduled ? `Scheduled for ${newCampaign.scheduledDate || 'TBD'}` : 'Launch Immediately'}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', gap: '12px', marginTop: '40px' }}>
-                      <button
-                        onClick={() => modalStep > 1 ? setModalStep(modalStep - 1) : setIsCampaignModalOpen(false)}
-                        style={{ flex: 1, padding: '14px', borderRadius: '12px', border: `1px solid ${t.borderSubtle}`, background: 'transparent', color: t.textSecondary, cursor: 'pointer', fontWeight: 600 }}
-                      >
-                        {modalStep === 1 ? 'Cancel' : 'Back'}
-                      </button>
-                      {modalStep < 5 ?
-                        <button
-                          onClick={() => setModalStep(modalStep + 1)}
-                          disabled={
-                            (modalStep === 1 && !newCampaign.name) ||
-                            (modalStep === 2 && !newCampaign.industry) ||
-                            (modalStep === 3 && !newCampaign.geography?.state) ||
-                            (modalStep === 4 && newCampaign.isScheduled && !newCampaign.scheduledDate)
-                          }
-                          style={{
-                            flex: 2, padding: '14px', background: '#6366f1', color: '#fff', borderRadius: '12px', border: 'none', cursor: 'pointer', fontWeight: 600, opacity: (
-                              (modalStep === 1 && !newCampaign.name) ||
-                              (modalStep === 2 && !newCampaign.industry) ||
-                              (modalStep === 3 && !newCampaign.geography?.state) ||
-                              (modalStep === 4 && newCampaign.isScheduled && !newCampaign.scheduledDate)
-                            ) ? 0.5 : 1
-                          }}
-                        >
-                          Next
-                        </button> :
-                        <button
-                          onClick={addCampaign}
-                          style={{ flex: 2, padding: '14px', background: '#22c55e', color: '#fff', borderRadius: '12px', border: 'none', cursor: 'pointer', fontWeight: 700 }}
-                        >
-                          {editingCampaignId ? 'Save Changes' : 'Launch Campaign'}
-                        </button>
-                      }
+                  {!newCampaign.industry && (
+                    <div style={{ padding: '16px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: '12px', fontSize: '0.75rem', color: '#f59e0b', display: 'flex', gap: '10px' }}>
+                      <span>ℹ️</span>
+                      <span>Complete category selection to finalize your target audience.</span>
                     </div>
-                  </>
-                );
-              })()}
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )
@@ -1563,6 +2076,6 @@ export default function Dashboard() {
       }
 
       <style dangerouslySetInnerHTML={{ __html: `* { box-sizing: border-box; } body { margin: 0; }` }} />
-    </div >
+    </div>
   );
 }

@@ -17,6 +17,7 @@
     "@agency/db": "workspace:*",
     "@agency/events": "workspace:*",
     "@agency/logger": "workspace:*",
+    "@agency/orchestrator": "workspace:*",
     "@agency/types": "workspace:*",
     "@nestjs/bull": "^10.1.0",
     "@nestjs/common": "^10.3.0",

@@ -721,6 +721,9 @@ model Campaign {
 
   leads Lead[]
 
+  emailSequenceId String?
+  emailSequence   EmailSequence? @relation(fields: [emailSequenceId], references: [id], onDelete: SetNull)
+
   @@index([status])
 }
 
@@ -737,4 +740,23 @@ model Notification {
   createdAt DateTime            @default(now())
 
   @@index([userId, isRead])
+}
+
+model EmailSequence {
+  id        String      @id @default(cuid())
+  name      String
+  steps     EmailStep[]
+  campaigns Campaign[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+model EmailStep {
+  id        String        @id @default(cuid())
+  sequenceId String
+  stepNumber Int
+  delayDays  Int          @default(0)
+  subject   String?
+  body      String?
+  sequence   EmailSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
 }

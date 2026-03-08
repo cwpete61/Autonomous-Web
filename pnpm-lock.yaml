@@ -454,7 +454,11 @@ importers:
 
   packages/services/reply-classification-service: {}
 
-  packages/services/screenshot-service: {}
+  packages/services/screenshot-service:
+    dependencies:
+      playwright:
+        specifier: ^1.50.0
+        version: 1.58.2
 
   packages/services/storage-service: {}
 

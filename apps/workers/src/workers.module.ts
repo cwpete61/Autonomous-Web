@@ -7,7 +7,7 @@ import { BullAdapter } from '@bull-board/api/bullAdapter';
 import { HealthController } from './health.controller';
 import { EventsModule } from '@agency/events';
 import { OrchestratorModule } from '@agency/orchestrator';
-import { DbModule } from '@agency/db';
+import { DbModule, PrismaService } from '@agency/db';
 import { ScoutAgent, OutreachAgent } from '@agency/agents';
 import { WorkflowListener } from './runners/workflow.listener';
 import { ScoutProcessor } from './jobs/scout.processor';
@@ -90,7 +90,8 @@ import { secretsLoader } from '@agency/utils';
     ErrorProcessor,
     {
       provide: ScoutAgent,
-      useValue: new ScoutAgent(),
+      useFactory: (prisma: PrismaService) => new ScoutAgent({ db: prisma }),
+      inject: [PrismaService],
     },
     {
       provide: OutreachAgent,

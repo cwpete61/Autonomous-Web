@@ -1,6 +1,6 @@
-import { Process, Processor } from '@nestjs/bull';
+import { Process, Processor, InjectQueue } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
-import { Job } from 'bull';
+import { Job, Queue } from 'bull';
 import { BaseProcessor } from './base.processor';
 import { ScoutAgent } from '@agency/agents';
 import { PrismaService } from '@agency/db';
@@ -13,11 +13,12 @@ export class ScoutProcessor extends BaseProcessor {
         private readonly prisma: PrismaService,
         private readonly eventBus: RedisEventBus,
         private readonly scoutAgent: ScoutAgent,
+        @InjectQueue('research-queue') private readonly researchQueue: Queue,
     ) {
         super(ScoutProcessor.name);
     }
 
-    @Process('process')
+    @Process('research')
     async handleResearch(job: Job<any>) {
         const { id: leadId, ...data } = job.data;
         this.logger.log(`Starting research for lead: ${leadId}`);
@@ -73,6 +74,49 @@ export class ScoutProcessor extends BaseProcessor {
             this.logger.log(`Research completed and event emitted for lead: ${leadId}`);
 
             return results;
+        } catch (error) {
+            this.handleFailure(job, error);
+            throw error;
+        }
+    }
+
+    @Process('discover')
+    async handleDiscovery(job: Job<any>) {
+        const { campaignId, niche, geography, minLeads } = job.data;
+        this.logger.log(`Starting business discovery for campaign: ${campaignId} (${niche} in ${geography})`);
+
+        try {
+            this.reportProgress(job, 10);
+
+            // Call the agent's findLeads logic which now has "Database First" check
+            const leads = await this.scoutAgent.findLeads({
+                industries: [niche],
+                location: geography,
+                minLeads: minLeads || 20
+            });
+
+            this.reportProgress(job, 80);
+
+            // Associate newly found/persisted leads with this campaign
+            // Note: persistLead already created the Business and Lead records, but without campaignId
+            for (const lead of leads) {
+                await this.prisma.lead.update({
+                    where: { id: lead.id },
+                    data: { campaignId }
+                });
+                
+                // Trigger the next stage (research) for each new lead
+                await this.researchQueue.add('research', lead, {
+                    attempts: 3,
+                    backoff: 5000,
+                    removeOnComplete: true
+                });
+            }
+
+            this.reportProgress(job, 100);
+            this.logger.log(`Discovery completed: Found and enqueued ${leads.length} leads for campaign ${campaignId}`);
+            
+            return { leadsFound: leads.length };
         } catch (error) {
             this.handleFailure(job, error);
             throw error;

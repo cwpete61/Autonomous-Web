@@ -1,13 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { CampaignStatus } from '@agency/db';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 
 @Injectable()
 export class CampaignsService {
+    private readonly logger = new Logger(CampaignsService.name);
+
     constructor(
         private prisma: PrismaService,
         @InjectQueue('research-queue') private researchQueue: Queue
@@ -76,6 +78,24 @@ export class CampaignsService {
 
         // If newly active, enqueue all leads who aren't already RESEARCHED or better
         if (status === CampaignStatus.ACTIVE) {
+            // 1. Check if we need to discover NEW leads
+            // If the campaign has very few leads, trigger a discovery job
+            const leadCount = await this.prisma.lead.count({ where: { campaignId: id } });
+            
+            if (leadCount < 5) { // Threshold for triggering discovery
+                this.logger.log(`Campaign ${id} has low lead count (${leadCount}). Triggering discovery...`);
+                await this.researchQueue.add('discover', {
+                    campaignId: id,
+                    niche: campaign.niche,
+                    geography: campaign.geography,
+                    minLeads: 20
+                }, {
+                    attempts: 2,
+                    removeOnComplete: true
+                });
+            }
+
+            // 2. Enqueue existing leads who aren't already RESEARCHED or better
             const leads = await this.prisma.lead.findMany({
                 where: {
                     campaignId: id,

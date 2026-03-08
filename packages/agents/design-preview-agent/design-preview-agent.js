@@ -1,3 +1,7 @@
+const { ScreenshotService } = require('../../services/screenshot-service');
+const path = require('path');
+const fs = require('fs/promises');
+
 /**
  * DESIGN PREVIEW AGENT
  * Creates blurred redesign previews and before/after comparisons
@@ -30,6 +34,7 @@ class DesignPreviewAgent {
         this.anthropicKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
         this.screenshotKey = config.screenshotKey || process.env.SCREENSHOTONE_API_KEY;
         this.storageConfig = config.storage || {};
+        this.screenshotService = new ScreenshotService();
     }
 
     /**
@@ -66,9 +71,24 @@ class DesignPreviewAgent {
 
     async captureScreenshot(url) {
         if (!url) return null;
-        console.log(`[DesignPreview] Capturing screenshot of ${url}`);
-        // PRODUCTION: ScreenshotOne API or Playwright
-        return `https://placeholder.agency/screenshots/${url.replace(/https?:\/\//, '').replace(/\//g, '_')}.png`;
+        console.log(`[DesignPreview] Capturing real screenshot of ${url}`);
+        
+        try {
+            const filename = `${url.replace(/https?:\/\//, '').replace(/[\/?:@=&]/g, '_')}_${Date.now()}.png`;
+            const outputPath = path.join(process.cwd(), 'backups', 'screenshots', filename);
+            
+            await this.screenshotService.capture(url, {
+                outputPath,
+                fullPage: true,
+                timeout: 45000
+            });
+            
+            return outputPath;
+        } catch (error) {
+            console.error(`[DesignPreview] Screenshot failed for ${url}:`, error.message);
+            // Fallback to placeholder if real capture fails
+            return `https://placeholder.agency/screenshots/${url.replace(/https?:\/\//, '').replace(/\//g, '_')}.png`;
+        }
     }
 
     async getDesignDirection(lead) {

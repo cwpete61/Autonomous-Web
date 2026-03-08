@@ -55,3 +55,8 @@ coverage/
 
 # Sentry
 .sentryclirc
+
+# Secrets directory
+secrets/
+test_output*.txt
+tsconfig.jest.json

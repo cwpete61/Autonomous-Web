@@ -22,7 +22,9 @@
       "@agency/types": ["../../packages/types/src"],
       "@agency/logger": ["../../packages/logger/src"],
       "@agency/config": ["../../packages/config/src"],
-      "@agency/events": ["../../packages/events/src"]
+      "@agency/events": ["../../packages/events/src"],
+      "@agency/utils": ["../../packages/utils/src"],
+      "@agency/orchestrator": ["../../packages/orchestrator/src"]
     }
   },
   "include": ["src/**/*"],

@@ -18,10 +18,13 @@ import { BackupsModule } from './modules/backups/backups.module';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { IncidentsModule } from './modules/incidents/incidents.module';
 import { AgentsModule } from './modules/agents/agents.module';
+import { DiagnosticsModule } from './modules/diagnostics/diagnostics.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { BullModule } from '@nestjs/bull';
 import { EventsModule } from '@agency/events';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
+import { secretsLoader } from '@agency/utils';
 
 @Module({
   imports: [
@@ -29,6 +32,7 @@ import { AuditInterceptor } from './common/interceptors/audit.interceptor';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '../../.env',
+      load: [secretsLoader],
     }),
 
     // Rate limiting
@@ -67,6 +71,8 @@ import { AuditInterceptor } from './common/interceptors/audit.interceptor';
     MaintenanceModule,
     IncidentsModule,
     AgentsModule,
+    DiagnosticsModule,
+    SettingsModule,
     EventsModule,
     // OutreachModule,
     // NotificationsModule,

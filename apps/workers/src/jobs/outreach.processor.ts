@@ -8,14 +8,13 @@ import { RedisEventBus, EVENTS } from '@agency/events';
 
 @Processor('outreach-queue')
 export class OutreachProcessor extends BaseProcessor {
-    private readonly outreachAgent: OutreachAgent;
 
     constructor(
         private readonly prisma: PrismaService,
         private readonly eventBus: RedisEventBus,
+        private readonly outreachAgent: OutreachAgent,
     ) {
         super(OutreachProcessor.name);
-        this.outreachAgent = new OutreachAgent();
     }
 
     @Process('process')

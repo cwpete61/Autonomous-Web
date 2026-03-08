@@ -1,8 +1,12 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:40000';
 
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
+    // Add auth token if available
+    const token = typeof window !== 'undefined' ? localStorage.getItem('orbis_token') : null;
+
     const headers = {
         'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         ...options.headers,
     };
 

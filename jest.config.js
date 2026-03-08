@@ -1,0 +1,23 @@
+const path = require('path');
+
+module.exports = {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+  rootDir: '.',
+  testRegex: '.*\\.spec\\.ts$',
+  moduleFileExtensions: ['js', 'json', 'ts'],
+  transform: {
+    '^.+\\.(t|j)s$': ['ts-jest', {
+      tsconfig: 'tsconfig.jest.json',
+    }],
+  },
+  moduleNameMapper: {
+    '^@agency/db$': '<rootDir>/packages/db/src/index.ts',
+    '^@agency/orchestrator$': '<rootDir>/packages/orchestrator/src/index.ts',
+    '^@agency/events$': '<rootDir>/packages/events/src/index.ts',
+    '^@agency/config$': '<rootDir>/packages/config/src/index.ts',
+    '^@agency/logger$': '<rootDir>/packages/logger/src/index.ts',
+    '^@agency/types$': '<rootDir>/packages/types/src/index.ts',
+    '^@agency/agents$': '<rootDir>/packages/agents/index.ts',
+  },
+};

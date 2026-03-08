@@ -20,6 +20,7 @@
     "@agency/logger": "workspace:*",
     "@agency/orchestrator": "workspace:*",
     "@agency/types": "workspace:*",
+    "@agency/utils": "workspace:*",
     "@bull-board/api": "^6.20.3",
     "@bull-board/express": "^6.20.3",
     "@bull-board/nestjs": "^6.20.3",

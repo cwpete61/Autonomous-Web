@@ -207,12 +207,21 @@ ${(lead.issues || []).map(i => `- ${i}`).join('\n')}
 Key Pitch Angle: ${lead.redesignPitch || 'Their website needs a modern redesign'}
 Tone: ${lead.contactApproach || 'friendly and professional'}`;
 
-        const analysis = await this.callClaude(OUTREACH_SYSTEM_PROMPT, prompt);
-        return {
-            subjectLine: analysis.subjectLine || `Quick question about ${lead.website}`,
-            emailBody: analysis.emailBody || this._fallbackEmail(lead),
-            toneNotes: analysis.toneNotes || '',
-        };
+        try {
+            const analysis = await this.callClaude(OUTREACH_SYSTEM_PROMPT, prompt);
+            return {
+                subjectLine: analysis.subjectLine || `Quick question about ${lead.website}`,
+                emailBody: analysis.emailBody || this._fallbackEmail(lead),
+                toneNotes: analysis.toneNotes || '',
+            };
+        } catch (error) {
+            console.error('[Outreach] Error generating email via AI, using fallback:', error);
+            return {
+                subjectLine: `Quick question about ${lead.website}`,
+                emailBody: this._fallbackEmail(lead),
+                toneNotes: '',
+            };
+        }
     }
 
     /**
@@ -234,12 +243,21 @@ ${prevContext}
 
 Website issues: ${(lead.issues || []).slice(0, 3).join(', ')}`;
 
-        const analysis = await this.callClaude(FOLLOW_UP_SYSTEM_PROMPT, prompt);
-        return {
-            subjectLine: analysis.subjectLine || `Re: ${previousEmails[0]?.subjectLine}`,
-            emailBody: analysis.emailBody || this._fallbackFollowUp(lead, followUpNumber),
-            followUpAngle: analysis.followUpAngle || '',
-        };
+        try {
+            const analysis = await this.callClaude(FOLLOW_UP_SYSTEM_PROMPT, prompt);
+            return {
+                subjectLine: analysis.subjectLine || `Re: ${previousEmails[0]?.subjectLine}`,
+                emailBody: analysis.emailBody || this._fallbackFollowUp(lead, followUpNumber),
+                followUpAngle: analysis.followUpAngle || '',
+            };
+        } catch (error) {
+            console.error('[Outreach] Error generating follow-up via AI, using fallback:', error);
+            return {
+                subjectLine: `Re: ${previousEmails[0]?.subjectLine || 'Quick question'}`,
+                emailBody: this._fallbackFollowUp(lead, followUpNumber),
+                followUpAngle: '',
+            };
+        }
     }
 
     /**

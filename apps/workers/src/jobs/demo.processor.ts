@@ -6,7 +6,7 @@ import { DesignPreviewAgent } from '@agency/agents';
 import { PrismaService, LeadStatus } from '@agency/db';
 import { RedisEventBus, EVENTS } from '@agency/events';
 
-@Processor('build-queue')
+@Processor('demo-queue')
 export class DemoProcessor extends BaseProcessor {
     private readonly designAgent: DesignPreviewAgent;
 

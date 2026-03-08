@@ -8,14 +8,13 @@ import { RedisEventBus, EVENTS } from '@agency/events';
 
 @Processor('research-queue')
 export class ScoutProcessor extends BaseProcessor {
-    private readonly scoutAgent: ScoutAgent;
 
     constructor(
         private readonly prisma: PrismaService,
         private readonly eventBus: RedisEventBus,
+        private readonly scoutAgent: ScoutAgent,
     ) {
         super(ScoutProcessor.name);
-        this.scoutAgent = new ScoutAgent();
     }
 
     @Process('process')

@@ -760,3 +760,12 @@ model EmailStep {
   body      String?
   sequence   EmailSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
 }
+
+// ─── SYSTEM / WORKSPACE SETTINGS ────────────────────────────────────────────
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}

@@ -8,6 +8,7 @@ import { HealthController } from './health.controller';
 import { EventsModule } from '@agency/events';
 import { OrchestratorModule } from '@agency/orchestrator';
 import { DbModule } from '@agency/db';
+import { ScoutAgent, OutreachAgent } from '@agency/agents';
 import { WorkflowListener } from './runners/workflow.listener';
 import { ScoutProcessor } from './jobs/scout.processor';
 import { AuditProcessor } from './jobs/audit.processor';
@@ -18,12 +19,14 @@ import { ContentProcessor } from './jobs/content.processor';
 import { WebBuildProcessor } from './jobs/web-build.processor';
 import { ClientSuccessProcessor } from './jobs/client-success.processor';
 import { ErrorProcessor } from './jobs/error.processor';
+import { secretsLoader } from '@agency/utils';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '../../.env',
+      load: [secretsLoader],
     }),
 
     BullModule.forRootAsync({
@@ -85,6 +88,14 @@ import { ErrorProcessor } from './jobs/error.processor';
     WebBuildProcessor,
     ClientSuccessProcessor,
     ErrorProcessor,
+    {
+      provide: ScoutAgent,
+      useValue: new ScoutAgent(),
+    },
+    {
+      provide: OutreachAgent,
+      useValue: new OutreachAgent(),
+    },
   ],
 })
 export class WorkersModule { }

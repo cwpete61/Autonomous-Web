@@ -20,8 +20,14 @@ async function bootstrap() {
   );
 
   // CORS
+  const allowedOrigins = [
+    process.env.DASHBOARD_URL,
+    'http://localhost:3000',
+    'http://localhost:30000',
+  ].filter((o): o is string => !!o);
+
   app.enableCors({
-    origin: process.env.DASHBOARD_URL || 'http://localhost:3000',
+    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
     credentials: true,
   });
 
@@ -35,7 +41,7 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('docs', app, document);
 
-  const port = process.env.API_PORT || 4000;
+  const port = process.env.API_PORT || 40000;
   await app.listen(port);
   console.log(`[API] Running on http://localhost:${port}`);
   console.log(`[API] Swagger docs at http://localhost:${port}/docs`);

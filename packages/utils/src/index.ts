@@ -1,1 +1,1 @@
-export const utils = {};
+export * from './config/secrets.loader';

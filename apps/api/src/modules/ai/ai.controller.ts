@@ -1,13 +1,30 @@
 import { Controller, Post, Body, HttpException, HttpStatus } from '@nestjs/common';
 import { AiService } from './ai.service';
+import { IsString, IsNumber, Min, Max, IsOptional } from 'class-validator';
 
 export class GenerateEmailsDto {
+    @IsString()
     industry: string;
+
+    @IsString()
     pain_point_signal: string;
+
+    @IsString()
     primary_outcome: string;
+
+    @IsOptional()
+    @IsString()
     secondary_outcome?: string;
+
+    @IsString()
     sender_name: string;
+
+    @IsString()
     sender_company: string;
+
+    @IsNumber()
+    @Min(3)
+    @Max(5)
     step_count: number; // 3 | 4 | 5
 }
 
@@ -17,15 +34,6 @@ export class AiController {
 
     @Post('generate-emails')
     async generateEmails(@Body() dto: GenerateEmailsDto) {
-        const { step_count } = dto;
-
-        if (step_count < 3 || step_count > 5) {
-            throw new HttpException(
-                'step_count must be between 3 and 5',
-                HttpStatus.BAD_REQUEST,
-            );
-        }
-
         return this.aiService.generateEmailSequence(dto);
     }
 }

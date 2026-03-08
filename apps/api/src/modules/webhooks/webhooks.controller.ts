@@ -55,6 +55,16 @@ export class WebhooksController {
       }
     }
 
+    if (event.type === 'invoice.paid') {
+      const invoice = event.data.object as Stripe.Invoice;
+      const leadId = invoice.metadata?.leadId;
+
+      if (leadId) {
+        console.log(`[Webhook] Invoice paid for lead ${leadId}. Advancing to PAID.`);
+        await this.leadsService.updateStage(leadId, LeadStatus.PAID);
+      }
+    }
+
     return { received: true };
   }
 

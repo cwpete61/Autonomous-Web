@@ -16,12 +16,15 @@ export class WorkflowListener implements OnModuleInit {
         @InjectQueue('qualification-queue') private qualificationQueue: Queue,
         @InjectQueue('enrichment-queue') private enrichmentQueue: Queue,
         @InjectQueue('outreach-queue') private outreachQueue: Queue,
+        @InjectQueue('demo-queue') private demoQueue: Queue,
         @InjectQueue('build-queue') private buildQueue: Queue,
         @InjectQueue('content-queue') private contentQueue: Queue,
+        @InjectQueue('sales-close-queue') private salesQueue: Queue,
+        @InjectQueue('client-success-queue') private successQueue: Queue,
     ) { }
 
     async onModuleInit() {
-        this.logger.log('Initializing WorkflowListener: Subscribing to LEAD_STATUS_CHANGED');
+        this.logger.log('Initializing WorkflowListener: Subscribing to EVENTS');
 
         await this.eventBus.subscribe(EVENTS.LEAD_STATUS_CHANGED, async (event: DomainEvent) => {
             await this.handleLeadStatusChange(event);
@@ -33,9 +36,10 @@ export class WorkflowListener implements OnModuleInit {
     }
 
     private async handleLeadCreated(event: DomainEvent) {
-        this.logger.log(`New lead created: ${event.payload.id}. Routing to initial processing.`);
-        await this.researchQueue.add('process', event.payload, {
-            jobId: `research-${event.payload.id}`,
+        this.logger.log(`New lead created: ${event.payload.id || event.payload.leadId}. Routing to initial processing.`);
+        const lead = event.payload.lead || event.payload;
+        await this.researchQueue.add('process', lead, {
+            jobId: `research-${lead.id}-${Date.now()}`,
             removeOnComplete: true,
         });
     }
@@ -53,14 +57,25 @@ export class WorkflowListener implements OnModuleInit {
             'qualification-queue': this.qualificationQueue,
             'enrichment-queue': this.enrichmentQueue,
             'outreach-queue': this.outreachQueue,
+            'demo-queue': this.demoQueue,
             'build-queue': this.buildQueue,
             'content-queue': this.contentQueue,
+            'sales-close-queue': this.salesQueue,
+            'client-success-queue': this.successQueue,
         };
 
         const targetQueue = queueMap[queueName];
         if (targetQueue) {
             this.logger.log(`Routing lead ${leadId} to ${queueName}`);
-            await targetQueue.add('process', lead, {
+            
+            // Map the process name if needed, but most use 'process'
+            let processName = 'process';
+            if (queueName === 'client-success-queue') {
+                // Determine if onboarding or delivery
+                processName = to === 'REVIEW_PENDING' ? 'deliver' : 'onboard';
+            }
+
+            await targetQueue.add(processName, lead, {
                 jobId: `${queueName}-${leadId}-${Date.now()}`,
                 removeOnComplete: true,
             });

@@ -1,0 +1,24 @@
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[NestFactory] [39m[32mStarting Nest application...[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mPrismaModule dependencies initialized[39m[38;5;3m +35ms[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mPassportModule dependencies initialized[39m[38;5;3m +0ms[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mThrottlerModule dependencies initialized[39m[38;5;3m +0ms[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigHostModule dependencies initialized[39m[38;5;3m +1ms[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mUsersModule dependencies initialized[39m[38;5;3m +0ms[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAiModule dependencies initialized[39m[38;5;3m +0ms[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mDiscoveryModule dependencies initialized[39m[38;5;3m +0ms[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigModule dependencies initialized[39m[38;5;3m +1ms[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigModule dependencies initialized[39m[38;5;3m +1ms[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mBullModule dependencies initialized[39m[38;5;3m +0ms[39m
+api-1  | [32m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAppModule dependencies initialized[39m[38;5;3m +8ms[39m
+api-1  | [31m[Nest] 1  - [39m03/07/2026, 10:43:11 PM [31m  ERROR[39m [38;5;3m[ExceptionHandler] [39m[31mNeither apiKey nor config.authenticator provided[39m
+api-1  | Error: Neither apiKey nor config.authenticator provided
+api-1  |     at Stripe._setAuthenticator (/app/node_modules/.pnpm/stripe@20.4.1_@types+node@20.19.37/node_modules/stripe/cjs/stripe.core.js:162:23)
+api-1  |     at new Stripe (/app/node_modules/.pnpm/stripe@20.4.1_@types+node@20.19.37/node_modules/stripe/cjs/stripe.core.js:100:14)
+api-1  |     at new StripeService (/app/apps/api/dist/apps/api/src/modules/billing/stripe.service.js:20:23)
+api-1  |     at Injector.instantiateClass (/app/node_modules/.pnpm/@nestjs+core@10.4.22_@nestjs+common@10.4.22_class-transformer@0.5.1_class-validator@0.14.4_re_wv7sonobpk6cc2m3n6ev6bfqdu/node_modules/@nestjs/core/injector/injector.js:373:19)
+api-1  |     at callback (/app/node_modules/.pnpm/@nestjs+core@10.4.22_@nestjs+common@10.4.22_class-transformer@0.5.1_class-validator@0.14.4_re_wv7sonobpk6cc2m3n6ev6bfqdu/node_modules/@nestjs/core/injector/injector.js:65:45)
+api-1  |     at async Injector.resolveConstructorParams (/app/node_modules/.pnpm/@nestjs+core@10.4.22_@nestjs+common@10.4.22_class-transformer@0.5.1_class-validator@0.14.4_re_wv7sonobpk6cc2m3n6ev6bfqdu/node_modules/@nestjs/core/injector/injector.js:145:24)
+api-1  |     at async Injector.loadInstance (/app/node_modules/.pnpm/@nestjs+core@10.4.22_@nestjs+common@10.4.22_class-transformer@0.5.1_class-validator@0.14.4_re_wv7sonobpk6cc2m3n6ev6bfqdu/node_modules/@nestjs/core/injector/injector.js:70:13)
+api-1  |     at async Injector.loadProvider (/app/node_modules/.pnpm/@nestjs+core@10.4.22_@nestjs+common@10.4.22_class-transformer@0.5.1_class-validator@0.14.4_re_wv7sonobpk6cc2m3n6ev6bfqdu/node_modules/@nestjs/core/injector/injector.js:98:9)
+api-1  |     at async /app/node_modules/.pnpm/@nestjs+core@10.4.22_@nestjs+common@10.4.22_class-transformer@0.5.1_class-validator@0.14.4_re_wv7sonobpk6cc2m3n6ev6bfqdu/node_modules/@nestjs/core/injector/instance-loader.js:56:13
+api-1  |     at async Promise.all (index 3)

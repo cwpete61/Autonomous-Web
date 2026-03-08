@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { HealthController } from './health.controller';
 import { AuthModule } from './modules/auth/auth.module';
@@ -13,7 +14,14 @@ import { AiModule } from './modules/ai/ai.module';
 import { EmailSequencesModule } from './modules/email-sequences/email-sequences.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
+import { BackupsModule } from './modules/backups/backups.module';
+import { MaintenanceModule } from './modules/maintenance/maintenance.module';
+import { IncidentsModule } from './modules/incidents/incidents.module';
+import { AgentsModule } from './modules/agents/agents.module';
+import { BullModule } from '@nestjs/bull';
 import { EventsModule } from '@agency/events';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 
 @Module({
   imports: [
@@ -29,6 +37,18 @@ import { EventsModule } from '@agency/events';
       limit: 100,
     }]),
 
+    // Queue infrastructure
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        redis: {
+          host: 'localhost',
+          port: 6379,
+        },
+      }),
+      inject: [ConfigService],
+    }),
+
     // Global modules
     PrismaModule,
 
@@ -43,11 +63,24 @@ import { EventsModule } from '@agency/events';
     EmailSequencesModule,
     BillingModule,
     ApprovalsModule,
+    BackupsModule,
+    MaintenanceModule,
+    IncidentsModule,
+    AgentsModule,
     EventsModule,
     // OutreachModule,
     // NotificationsModule,
   ],
   controllers: [HealthController],
-  providers: [],
+  providers: [
+    {
+      provide: APP_FILTER,
+      useClass: HttpExceptionFilter,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
+    },
+  ],
 })
 export class AppModule { }

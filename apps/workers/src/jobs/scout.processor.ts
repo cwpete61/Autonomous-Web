@@ -3,14 +3,17 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 import { BaseProcessor } from './base.processor';
 import { ScoutAgent } from '@agency/agents';
-import { AGENT_QUEUES } from '@agency/orchestrator';
 import { PrismaService } from '@agency/db';
+import { RedisEventBus, EVENTS } from '@agency/events';
 
 @Processor('research-queue')
 export class ScoutProcessor extends BaseProcessor {
     private readonly scoutAgent: ScoutAgent;
 
-    constructor(private readonly prisma: PrismaService) {
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly eventBus: RedisEventBus,
+    ) {
         super(ScoutProcessor.name);
         this.scoutAgent = new ScoutAgent();
     }
@@ -29,32 +32,46 @@ export class ScoutProcessor extends BaseProcessor {
             this.reportProgress(job, 70);
 
             // Update lead and create audit log
-            await this.prisma.$transaction([
-                this.prisma.lead.update({
-                    where: { id: leadId },
-                    data: {
-                        status: 'RESEARCHED',
-                        qualificationScore: results.qualityScore, // using qualificationScore for now as qualityScore proxy
-                        discoveryNotes: results.redesignPitch,
+            const lead = await this.prisma.lead.update({
+                where: { id: leadId },
+                data: {
+                    status: 'RESEARCHED',
+                    qualificationScore: results.qualityScore,
+                    discoveryNotes: results.redesignPitch,
+                },
+                include: { business: true }
+            });
+
+            await this.prisma.auditLog.create({
+                data: {
+                    actorType: 'AGENT',
+                    action: 'LEAD_RESEARCH_COMPLETED',
+                    targetType: 'LEAD',
+                    targetId: leadId,
+                    metadata: {
+                        agent: 'ScoutAgent',
+                        qualityScore: results.qualityScore,
+                        issues: results.issues
                     }
-                }),
-                this.prisma.auditLog.create({
-                    data: {
-                        actorType: 'AGENT',
-                        action: 'LEAD_RESEARCH_COMPLETED',
-                        targetType: 'LEAD',
-                        targetId: leadId,
-                        metadata: {
-                            agent: 'ScoutAgent',
-                            qualityScore: results.qualityScore,
-                            issues: results.issues
-                        }
-                    }
-                })
-            ]);
+                }
+            });
+
+            // Emit status change event to trigger next stage in WorkflowListener
+            await this.eventBus.publish({
+                eventType: EVENTS.LEAD_STATUS_CHANGED,
+                timestamp: new Date().toISOString(),
+                correlationId: `scout-${leadId}-${Date.now()}`,
+                actorType: 'AGENT',
+                payload: {
+                    leadId,
+                    from: 'DISCOVERED',
+                    to: 'RESEARCHED',
+                    lead,
+                },
+            });
 
             this.reportProgress(job, 100);
-            this.logger.log(`Research completed for lead: ${leadId}. Quality Score: ${results.qualityScore}`);
+            this.logger.log(`Research completed and event emitted for lead: ${leadId}`);
 
             return results;
         } catch (error) {

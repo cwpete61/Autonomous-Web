@@ -248,7 +248,13 @@ Website issues: ${(lead.issues || []).slice(0, 3).join(', ')}`;
     async sendEmail(to, subject, body, options = {}) {
         console.log(`[Outreach] Sending email to ${to} | Subject: ${subject}`);
 
-        // Add CAN-SPAM footer
+        // CAN-SPAM Compliance Check
+        const compliance = this.validateCompliance(body, options);
+        if (!compliance.valid) {
+            throw new Error(`CAN-SPAM Compliance Failure: ${compliance.reasons.join(', ')}`);
+        }
+
+        // Add CAN-SPAM footer if missing (redundant check but safe)
         const fullBody = `${body}\n\n---\nIf you'd prefer I not reach out, just reply "unsubscribe" and I'll remove you immediately.\n${this.fromName} • ${options.physicalAddress || '123 Agency St, Austin TX 78701'}`;
 
         if (this.emailProvider === 'instantly') {
@@ -340,18 +346,60 @@ Return JSON:
         return this.callClaude('You classify sales email replies accurately.', prompt);
     }
 
+    /**
+     * Validate email content for CAN-SPAM compliance
+     */
+    validateCompliance(body, options = {}) {
+        const reasons = [];
+        const content = body.toLowerCase();
+
+        // 1. Unsubscribe mechanism
+        if (!content.includes('unsubscribe') && !content.includes('opt out') && !content.includes('remove me')) {
+            reasons.push('Missing unsubscribe or opt-out mechanism');
+        }
+
+        // 2. Physical address
+        if (!options.physicalAddress && !process.env.AGENCY_PHYSICAL_ADDRESS && !body.includes('St') && !body.includes('Ave')) {
+            reasons.push('Missing physical postal address');
+        }
+
+        // 3. Deceptive subject lines (AI should handle this via prompt, but we can do basic checks)
+        // [Add more heuristics as needed]
+
+        return {
+            valid: reasons.length === 0,
+            reasons
+        };
+    }
+
     // ─── Email Providers ────────────────────────────────────────────
 
     async _sendViaResend(to, subject, body) {
-        // PRODUCTION: Uncomment and use
-        // const res = await fetch('https://api.resend.com/emails', {
-        //     method: 'POST',
-        //     headers: { 'Authorization': `Bearer ${this.resendKey}`, 'Content-Type': 'application/json' },
-        //     body: JSON.stringify({ from: `${this.fromName} <${this.fromEmail}>`, to, subject, text: body }),
-        // });
-        // return res.json();
+        if (!this.resendKey) {
+            console.warn('[Outreach] Resend API key missing — using mock data');
+            return { messageId: `resend_stub_${Date.now()}`, status: 'sent_stub' };
+        }
 
-        return { messageId: `resend_stub_${Date.now()}`, status: 'sent_stub' };
+        try {
+            const res = await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.resendKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    from: `${this.fromName} <${this.fromEmail}>`,
+                    to,
+                    subject,
+                    text: body
+                }),
+            });
+            const data = await res.json();
+            return data;
+        } catch (error) {
+            console.error('[Outreach] Resend error:', error.message);
+            return { error: true, message: error.message };
+        }
     }
 
     async _sendViaSendGrid(to, subject, body) {
@@ -555,7 +603,7 @@ Their website is outdated/low-scoring. Open a conversation about their online pr
                     'anthropic-version': '2023-06-01',
                 },
                 body: JSON.stringify({
-                    model: 'claude-sonnet-4-20250514',
+                    model: 'claude-3-5-sonnet-latest',
                     max_tokens: 1000,
                     system: systemPrompt,
                     messages: [{ role: 'user', content: userMessage }],

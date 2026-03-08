@@ -78,12 +78,39 @@ class ScoutAgent {
      * Google Places API search
      * Swap this for Apollo.io / Outscraper / Google Maps scraping in prod
      */
+    /**
+     * Google Places API search
+     */
     async searchBusinesses(industry, location) {
-        // PRODUCTION: Replace with real API call
-        // const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${industry}+in+${location}&key=${this.placesKey}`;
+        if (!this.placesKey) {
+            console.warn('[Scout] Google Places API key missing — using mock data');
+            return this._mockBusinessSearch(industry, location);
+        }
 
-        // DEMO stub — returns realistic mock data structure
-        return this._mockBusinessSearch(industry, location);
+        try {
+            const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(industry + ' in ' + location)}&key=${this.placesKey}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            
+            if (data.status !== 'OK') {
+                console.error('[Scout] Google Places error:', data.status, data.error_message);
+                return this._mockBusinessSearch(industry, location);
+            }
+
+            return data.results.map(place => ({
+                name: place.name,
+                industry,
+                address: place.formatted_address,
+                phone: null, // textsearch doesn't return phone, requires place details API
+                rating: place.rating,
+                reviewCount: place.user_ratings_total,
+                website: null, // Requires place details API or separate lookup
+                placeId: place.place_id
+            }));
+        } catch (error) {
+            console.error('[Scout] Google Places fetch error:', error.message);
+            return this._mockBusinessSearch(industry, location);
+        }
     }
 
     async evaluateBusiness(business) {
@@ -137,36 +164,61 @@ class ScoutAgent {
 
     async checkPageSpeed(url) {
         if (!url) return null;
-        // PRODUCTION:
-        // const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&key=${this.pagespeedKey}`;
-        // const res = await fetch(apiUrl);
-        // const data = await res.json();
+        if (!this.pagespeedKey) {
+            console.warn('[Scout] Google PageSpeed API key missing — using mock data');
+            return {
+                score: Math.floor(Math.random() * 60) + 10,
+                metrics: { fcp: '4.2s', lcp: '7.8s', cls: 0.34, tti: '9.1s' },
+            };
+        }
 
-        // Stub
-        return {
-            score: Math.floor(Math.random() * 60) + 10, // 10-70 range for bad sites
-            metrics: {
-                fcp: '4.2s',
-                lcp: '7.8s',
-                cls: 0.34,
-                tti: '9.1s',
-            },
-        };
+        try {
+            const apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile&key=${this.pagespeedKey}`;
+            const res = await fetch(apiUrl);
+            const data = await res.json();
+
+            const score = data.lighthouseResult?.categories?.performance?.score * 100;
+            const audits = data.lighthouseResult?.audits || {};
+
+            return {
+                score: Math.round(score || 50),
+                metrics: {
+                    fcp: audits['first-contentful-paint']?.displayValue || 'N/A',
+                    lcp: audits['largest-contentful-paint']?.displayValue || 'N/A',
+                    cls: audits['cumulative-layout-shift']?.numericValue || 0,
+                    tti: audits['interactive']?.displayValue || 'N/A',
+                },
+            };
+        } catch (error) {
+            console.error('[Scout] PageSpeed error:', error.message);
+            return null;
+        }
     }
 
     async findEmail(business) {
         if (!business.website) return null;
-        // PRODUCTION: Hunter.io API
-        // const domain = new URL(business.website).hostname;
-        // const url = `https://api.hunter.io/v2/domain-search?domain=${domain}&api_key=${this.hunterKey}`;
+        if (!this.hunterKey) {
+            console.warn('[Scout] Hunter.io API key missing — using mock data');
+            const domain = business.website?.replace(/https?:\/\/(www\.)?/, '').split('/')[0];
+            return { email: `info@${domain}`, confidence: 72, firstName: null };
+        }
 
-        // Stub
-        const domain = business.website?.replace(/https?:\/\/(www\.)?/, '').split('/')[0];
-        return {
-            email: `info@${domain}`,
-            confidence: 72,
-            firstName: business.ownerName?.split(' ')[0] || null,
-        };
+        try {
+            const domain = new URL(business.website).hostname;
+            const url = `https://api.hunter.io/v2/domain-search?domain=${domain}&api_key=${this.hunterKey}`;
+            const res = await fetch(url);
+            const data = await res.json();
+
+            const primaryEmail = data.data?.emails?.[0];
+            return {
+                email: primaryEmail?.value || null,
+                confidence: primaryEmail?.confidence || 0,
+                firstName: primaryEmail?.first_name || null,
+            };
+        } catch (error) {
+            console.error('[Scout] Hunter error:', error.message);
+            return null;
+        }
     }
 
     async analyzeWithClaude(business) {
@@ -188,7 +240,7 @@ Based on typical patterns for this type of ${business.industry} business, assess
                 'anthropic-version': '2023-06-01',
             },
             body: JSON.stringify({
-                model: 'claude-sonnet-4-20250514',
+                model: 'claude-3-5-sonnet-latest',
                 max_tokens: 1000,
                 system: SCOUT_SYSTEM_PROMPT,
                 messages: [{ role: 'user', content: prompt }],

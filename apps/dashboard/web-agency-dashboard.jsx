@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { campaignsApi, leadsApi, emailSequencesApi, agentsApi } from './src/lib/api';
 
 const PIPELINE_STAGES = [
   { id: 'lead_inbox', label: 'Lead Inbox', color: '#94a3b8' },
@@ -29,7 +30,7 @@ const SAMPLE_LEADS = [
   { id: 9, name: 'Summit Roofing', industry: 'Roofing', city: 'Nashville, TN', score: 78, stage: 'building', website: 'summitroofing.com' },
 ];
 
-const AGENTS = [
+const INITIAL_AGENTS = [
   { name: 'Scout Agent', status: 'active', lastRun: '2 min ago', processed: 47 },
   { name: 'Outreach Agent', status: 'active', lastRun: '5 min ago', processed: 23 },
   { name: 'Design Preview', status: 'idle', lastRun: '1 hr ago', processed: 8 },
@@ -273,6 +274,7 @@ export default function Dashboard() {
   const [leadSettings, setLeadSettings] = useState({});
   const [crmData, setCrmData] = useState(INITIAL_CRM_CLIENTS);
   const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
+  const [dashboardAgents, setDashboardAgents] = useState(INITIAL_AGENTS);
   const [isCampaignModalOpen, setIsCampaignModalOpen] = useState(false);
   const [crmSearchTerm, setCrmSearchTerm] = useState('');
   const [crmFilterStage, setCrmFilterStage] = useState('all');
@@ -304,6 +306,7 @@ export default function Dashboard() {
   const [importLocationsError, setImportLocationsError] = useState(null);
   const [isSystemAccordionOpen, setIsSystemAccordionOpen] = useState(false);
   const [isLocationsAccordionOpen, setIsLocationsAccordionOpen] = useState(false);
+  const [pipelineFitMode, setPipelineFitMode] = useState(false);
 
   // ─── Email Sequences State ────────────────────────────────────────
   const blankEmailStep = (step) => ({ step, subject: '', body: '', delayDays: step === 1 ? 0 : 3 });
@@ -331,6 +334,52 @@ export default function Dashboard() {
     // Force mount immediately to avoid getting stuck
     setHasMounted(true);
 
+    async function fetchData() {
+        try {
+            const [cData, lData, sData] = await Promise.all([
+                campaignsApi.list(),
+                leadsApi.list(),
+                emailSequencesApi.list()
+            ]);
+            if (Array.isArray(cData)) setCampaigns(cData);
+            if (Array.isArray(lData)) setCrmData(lData);
+            if (Array.isArray(sData)) setEmailSequences(sData);
+        } catch (err) {
+            console.error("API Fetch Error:", err);
+        }
+    }
+
+    fetchData();
+
+    // Agent status polling
+    const pollInterval = setInterval(async () => {
+        try {
+            const agentsData = await agentsApi.list();
+            if (agentsData && typeof agentsData === 'object') {
+                // Update AGENTS mock data or state if we had one
+                // For now, let's keep AGENTS as a local state so we can update it
+                setDashboardAgents(prev => {
+                    // Map API response to our AGENTS structure
+                    return prev.map(agent => {
+                        const apiAgent = agentsData[agent.name.toLowerCase().replace(/\s+/g, '-')] || // e.g. "Scout Agent" -> "scout-agent"
+                                        agentsData[agent.name.split(' ')[0].toLowerCase() + '-queue']; // e.g. "Scout Agent" -> "scout-queue"
+                        
+                        if (apiAgent) {
+                            return {
+                                ...agent,
+                                processed: apiAgent.completed + apiAgent.failed,
+                                status: apiAgent.active > 0 ? 'active' : (apiAgent.waiting > 0 ? 'active' : 'idle')
+                            };
+                        }
+                        return agent;
+                    });
+                });
+            }
+        } catch (err) {
+            console.error("Agent Polling Error:", err);
+        }
+    }, 5000);
+
     try {
       if (typeof window !== 'undefined') {
         console.log("Dashboard Mounting...");
@@ -356,45 +405,12 @@ export default function Dashboard() {
             if (parsed && typeof parsed === 'object') setLeadSettings(parsed);
           } catch (e) { console.error("Error parsing leads:", e); }
         }
-
-        const savedCrm = localStorage.getItem('orbis_crm_data');
-        if (savedCrm) {
-          try {
-            const parsed = JSON.parse(savedCrm);
-            if (Array.isArray(parsed)) setCrmData(parsed);
-          } catch (e) { console.error("Error parsing CRM data:", e); }
-        }
-
-        const savedCampaigns = localStorage.getItem('orbis_campaigns');
-        if (savedCampaigns) {
-          try {
-            const parsed = JSON.parse(savedCampaigns);
-            if (Array.isArray(parsed)) setCampaigns(parsed);
-          } catch (e) { console.error("Error parsing campaigns:", e); }
-        }
-
-        const savedSelected = localStorage.getItem('orbis_selected_lead');
-        if (savedSelected) setSelectedLeadId(savedSelected);
-
-        const savedCategories = localStorage.getItem('orbis_custom_categories');
-        if (savedCategories) {
-          try {
-            const parsed = JSON.parse(savedCategories);
-            if (parsed && typeof parsed === 'object') setCustomCategories(parsed);
-          } catch (e) { console.error("Error parsing custom categories:", e); }
-        }
-
-        const savedLocations = localStorage.getItem('orbis_custom_locations');
-        if (savedLocations) {
-          try {
-            const parsed = JSON.parse(savedLocations);
-            if (Array.isArray(parsed)) setCustomLocations(parsed);
-          } catch (e) { console.error("Error parsing custom locations:", e); }
-        }
       }
     } catch (err) {
       console.error("Initialization Error:", err);
     }
+
+    return () => clearInterval(pollInterval);
   }, []);
 
   const handleViewChange = (view) => {
@@ -427,89 +443,60 @@ export default function Dashboard() {
     });
   };
 
-  const handleDeleteLead = (id) => {
+  const handleDeleteLead = async (id) => {
     if (window.confirm('Are you sure you want to delete this lead?')) {
-      // 1. Remove from CRM main data
-      const nextLeads = crmData.filter(l => l.id !== id);
-      setCrmData(nextLeads);
-      if (typeof window !== 'undefined') localStorage.setItem('orbis_crm_data', JSON.stringify(nextLeads));
+      try {
+        await leadsApi.delete(id);
+        const lData = await leadsApi.list();
+        setCrmData(lData);
 
-      // 2. Remove from lead settings (active/inactive status)
-      setLeadSettings(prev => {
-        const next = { ...prev };
-        delete next[id];
-        if (typeof window !== 'undefined') localStorage.setItem('orbis_leads_active', JSON.stringify(next));
-        return next;
-      });
-
-      // 3. Reset selection if this lead was selected
-      if (selectedLeadId === id) {
-        setSelectedLeadId(null);
-        if (typeof window !== 'undefined') localStorage.removeItem('orbis_selected_lead');
+        if (selectedLeadId === id) {
+          setSelectedLeadId(null);
+        }
+        setExpandedLeadId(null);
+      } catch (err) {
+        console.error("Failed to delete lead:", err);
+        alert("Failed to delete lead. See console.");
       }
-
-      setExpandedLeadId(null);
     }
   };
 
   const addCampaign = async () => {
     if (!newCampaign?.name) return;
 
-    const colors = ['#6366f1', '#8b5cf6', '#a855f7', '#f59e0b', '#22c55e', '#06b6d4'];
-    const campaignStatus = newCampaign.isScheduled ? 'scheduled' : 'queued';
+    const campaignStatus = newCampaign.isScheduled ? 'PAUSED' : 'ACTIVE';
 
-    if (editingCampaignId) {
-      // Update existing
-      const updated = { ...newCampaign, status: newCampaign.isScheduled ? 'scheduled' : newCampaign.status };
-      const nextCampaigns = campaigns.map(c => c.id === editingCampaignId ? updated : c);
-      setCampaigns(nextCampaigns);
-      if (typeof window !== 'undefined') localStorage.setItem('orbis_campaigns', JSON.stringify(nextCampaigns));
-    } else {
-      // Create new — always goes to job queue first
-      const campaign = {
-        id: `cp${Date.now()}`,
-        ...newCampaign,
-        leads: 0,
-        sent: 0,
-        replies: 0,
-        // 'queued' = immediate run pending, 'scheduled' = time-gated
-        status: campaignStatus,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        createdAt: new Date().toISOString(),
-      };
-      const nextCampaigns = [campaign, ...campaigns];
-      setCampaigns(nextCampaigns);
-      if (typeof window !== 'undefined') localStorage.setItem('orbis_campaigns', JSON.stringify(nextCampaigns));
-
-      // POST to backend API (non-blocking — best-effort sync)
-      try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-        await fetch(`${apiUrl}/campaigns`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: campaign.name,
-            niche: campaign.industry?.label || 'General',
-            geography: [
-              campaign.geography?.city,
-              campaign.geography?.state
-            ].filter(Boolean).join(', ') || 'All',
-            sourceConfig: {
-              targetCount: campaign.targetCount,
-              services: campaign.services,
-              industry: campaign.industry,
-              geography: campaign.geography,
-            },
-            thresholds: { targetCount: campaign.targetCount },
-            status: campaignStatus === 'queued' ? 'ACTIVE' : 'PAUSED',
-          }),
+    try {
+      if (editingCampaignId) {
+        await campaignsApi.update(editingCampaignId, {
+          name: newCampaign.name,
+          status: campaignStatus,
         });
-      } catch (err) {
-        console.warn('[Campaign] API sync failed (offline?). Saved locally.', err);
+      } else {
+        await campaignsApi.create({
+          name: newCampaign.name,
+          niche: newCampaign.industry?.label || 'General',
+          geography: [
+            newCampaign.geography?.city,
+            newCampaign.geography?.state
+          ].filter(Boolean).join(', ') || 'All',
+          sourceConfig: {
+            targetCount: newCampaign.targetCount,
+            services: newCampaign.services,
+            industry: newCampaign.industry,
+            geography: newCampaign.geography,
+          },
+          thresholds: { targetCount: newCampaign.targetCount },
+          status: campaignStatus,
+        });
       }
 
-      // Auto-navigate to job queue so user sees their new job
+      const cData = await campaignsApi.list();
+      setCampaigns(cData);
       handleViewChange('jobqueue');
+    } catch (err) {
+      console.error("Failed to save campaign:", err);
+      alert("Failed to save campaign. See console.");
     }
 
     setIsCampaignModalOpen(false);
@@ -695,29 +682,61 @@ export default function Dashboard() {
     }
   };
 
-  const updateLead = (id, updates) => {
-    setCrmData(prev => {
-      const next = prev.map(l => l.id === id ? { ...l, ...updates } : l);
-      if (typeof window !== 'undefined') localStorage.setItem('orbis_crm_data', JSON.stringify(next));
-      return next;
-    });
+  const updateLead = async (id, updates) => {
+    try {
+        await leadsApi.update(id, updates);
+        const lData = await leadsApi.list();
+        setCrmData(lData);
+    } catch (err) {
+        console.error("Failed to update lead:", err);
+    }
   };
 
-  const handleUpdateCampaignStatus = (id, status) => {
-    setCampaigns(prev => {
-      const next = prev.map(c => c.id === id ? { ...c, status } : c);
-      if (typeof window !== 'undefined') localStorage.setItem('orbis_campaigns', JSON.stringify(next));
-      return next;
-    });
+  const handleUpdateLeadStage = async (id, stage) => {
+    try {
+        await leadsApi.updateStage(id, stage);
+        const lData = await leadsApi.list();
+        setCrmData(lData);
+    } catch (err) {
+        console.error("Failed to update lead stage:", err);
+    }
   };
 
-  const handleDeleteCampaign = (id) => {
+   const handleSaveLeadChanges = async (id) => {
+    if (!editLeadData || editLeadData.id !== id) return;
+
+    try {
+        await leadsApi.update(id, editLeadData);
+        const lData = await leadsApi.list();
+        setCrmData(lData);
+        alert("Lead updated successfully!");
+    } catch (err) {
+        console.error("Failed to save lead changes:", err);
+        alert("Failed to save changes.");
+    }
+  };
+
+  const handleUpdateCampaignStatus = async (id, status) => {
+    try {
+        // Map UI status to API status
+        const apiStatus = status === 'active' ? 'ACTIVE' : status === 'paused' ? 'PAUSED' : 'COMPLETED';
+        await campaignsApi.updateStatus(id, apiStatus);
+        const cData = await campaignsApi.list();
+        setCampaigns(cData);
+    } catch (err) {
+        console.error("Failed to update campaign status:", err);
+    }
+  };
+
+  const handleDeleteCampaign = async (id) => {
     if (window.confirm('Are you sure you want to delete this campaign?')) {
-      setCampaigns(prev => {
-        const next = prev.filter(c => c.id !== id);
-        if (typeof window !== 'undefined') localStorage.setItem('orbis_campaigns', JSON.stringify(next));
-        return next;
-      });
+      try {
+          await campaignsApi.delete(id);
+          const cData = await campaignsApi.list();
+          setCampaigns(cData);
+      } catch (err) {
+          console.error("Failed to delete campaign:", err);
+      }
     }
   };
 
@@ -737,29 +756,46 @@ export default function Dashboard() {
     });
   };
 
-  const saveEmailSequence = () => {
+  const saveEmailSequence = async () => {
     if (!newSequence.name) return;
-    if (editingSequenceId) {
-      setEmailSequences(prev => prev.map(s => s.id === editingSequenceId ? { ...newSequence, id: editingSequenceId } : s));
-    } else {
-      setEmailSequences(prev => [{ ...newSequence, id: `eq${Date.now()}`, createdAt: new Date().toISOString() }, ...prev]);
+    try {
+        if (editingSequenceId) {
+          await emailSequencesApi.update(editingSequenceId, newSequence);
+        } else {
+          await emailSequencesApi.create(newSequence);
+        }
+        const sData = await emailSequencesApi.list();
+        setEmailSequences(sData);
+        setIsEmailModalOpen(false);
+        setEditingSequenceId(null);
+        setNewSequence(blankSequence());
+        setActiveEmailStep(1);
+    } catch (err) {
+        console.error("Failed to save email sequence:", err);
+        alert("Failed to save email sequence. See console.");
     }
-    setIsEmailModalOpen(false);
-    setEditingSequenceId(null);
-    setNewSequence(blankSequence());
-    setActiveEmailStep(1);
   };
 
-  const deleteEmailSequence = (id) => {
+  const deleteEmailSequence = async (id) => {
     if (window.confirm('Delete this email sequence?')) {
-      setEmailSequences(prev => prev.filter(s => s.id !== id));
+      try {
+          await emailSequencesApi.delete(id);
+          const sData = await emailSequencesApi.list();
+          setEmailSequences(sData);
+      } catch (err) {
+          console.error("Failed to delete email sequence:", err);
+      }
     }
   };
 
-  const assignSequenceToCampaign = (sequenceId, campaignId) => {
-    setEmailSequences(prev => prev.map(s =>
-      s.id === sequenceId ? { ...s, assignedCampaignId: campaignId || null } : s
-    ));
+  const assignSequenceToCampaign = async (sequenceId, campaignId) => {
+    try {
+        await emailSequencesApi.update(sequenceId, { assignedCampaignId: campaignId || null });
+        const sData = await emailSequencesApi.list();
+        setEmailSequences(sData);
+    } catch (err) {
+        console.error("Failed to assign sequence:", err);
+    }
   };
 
   const generateEmailsWithAI = async () => {
@@ -842,14 +878,87 @@ export default function Dashboard() {
             </div>
 
             {activeView === 'pipeline' && (
-              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${PIPELINE_STAGES.length}, minmax(220px, 1fr))`, gap: '8px', overflowX: 'auto', paddingBottom: '20px' }}>
-                {PIPELINE_STAGES.map((stage, idx) => {
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'flex-end', 
+                  alignItems: 'center', 
+                  gap: '12px', 
+                  padding: '12px 20px', 
+                  background: t.card, 
+                  borderRadius: '16px', 
+                  border: `1px solid ${t.border}`,
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+                }}>
+                  <span style={{ fontSize: '0.8rem', color: t.textSecondary, fontWeight: 700, letterSpacing: '0.02em' }}>PIPELINE DISPLAY:</span>
+                  <div style={{ display: 'flex', background: t.bg, borderRadius: '10px', padding: '4px' }}>
+                    <button 
+                      onClick={() => setPipelineFitMode(false)}
+                      style={{ 
+                        padding: '8px 16px', 
+                        borderRadius: '8px', 
+                        border: 'none', 
+                        background: !pipelineFitMode ? '#6366f1' : 'transparent', 
+                        color: !pipelineFitMode ? '#fff' : t.textMuted,
+                        cursor: 'pointer',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      Scrolling
+                    </button>
+                    <button 
+                      onClick={() => setPipelineFitMode(true)}
+                      style={{ 
+                        padding: '8px 16px', 
+                        borderRadius: '8px', 
+                        border: 'none', 
+                        background: pipelineFitMode ? '#6366f1' : 'transparent', 
+                        color: pipelineFitMode ? '#fff' : t.textMuted,
+                        cursor: 'pointer',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      Fit to Screen
+                    </button>
+                  </div>
+                </div>
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: pipelineFitMode 
+                    ? `repeat(${PIPELINE_STAGES.length}, 1fr)` 
+                    : `repeat(${PIPELINE_STAGES.length}, minmax(320px, 1fr))`, 
+                  gap: pipelineFitMode ? '8px' : '16px', 
+                  overflowX: pipelineFitMode ? 'hidden' : 'auto', 
+                  paddingBottom: '20px' 
+                }}>
+                {leadsPerStage.map((stage, idx) => {
                   const isActive = phaseSettings?.[stage.id];
-                  const stageLeads = safeCrmData.filter(l => l.stage === stage.id);
                   const columnBg = idx % 2 === 0 ? 'transparent' : (isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)');
 
                   return (
-                    <div key={stage.id} style={{ minWidth: '220px', background: columnBg, padding: '12px', borderRadius: '12px', transition: 'background 0.3s' }}>
+                    <div
+                      key={stage.id}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                          const leadId = e.dataTransfer.getData('leadId');
+                          handleUpdateLeadStage(leadId, stage.id);
+                      }}
+                      style={{ 
+                        minWidth: pipelineFitMode ? '0' : '320px', 
+                        background: columnBg, 
+                        padding: pipelineFitMode ? '8px' : '16px', 
+                        borderRadius: '12px', 
+                        transition: 'all 0.3s', 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        gap: pipelineFitMode ? '8px' : '16px',
+                        fontSize: pipelineFitMode ? '0.9em' : '1em'
+                      }}
+                    >
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', alignItems: 'center' }}>
                         <span style={{ fontSize: '0.75rem', fontWeight: 800, color: t.textSecondary, letterSpacing: '0.05em' }}>{stage.label.toUpperCase()}</span>
                         <div onClick={() => togglePhase(stage.id)} style={{ width: 28, height: 14, background: isActive ? stage.color : t.barBg, borderRadius: 10, cursor: 'pointer', position: 'relative' }}>
@@ -857,8 +966,16 @@ export default function Dashboard() {
                         </div>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {stageLeads.map(lead => (
-                          <div key={lead.id} onClick={() => handleSelectLead(lead)} style={{ padding: '12px', background: t.card, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', cursor: 'pointer', transition: 'transform 0.2s, box-shadow 0.2s' }} onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'; }} onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}>
+                        {stage.leads.map(lead => (
+                          <div
+                            key={lead.id}
+                            draggable
+                            onDragStart={(e) => e.dataTransfer.setData('leadId', lead.id)}
+                            onClick={() => handleSelectLead(lead)}
+                            style={{ padding: '12px', background: t.card, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', cursor: 'grab', transition: 'transform 0.2s, box-shadow 0.2s' }}
+                            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
+                          >
                             <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{lead.name}</div>
                             <div style={{ fontSize: '0.7rem', color: t.textSecondary }}>{lead.industry}</div>
                           </div>
@@ -868,11 +985,12 @@ export default function Dashboard() {
                   );
                 })}
               </div>
-            )}
+            </div>
+          )}
 
             {activeView === 'agents' && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
-                {(AGENTS || []).map((agent, i) => {
+                {(dashboardAgents || []).map((agent, i) => {
                   const status = getStatusStyle(agent.status);
                   return (
                     <div key={i} style={{ padding: '24px', background: t.card, border: `1px solid ${t.border}`, borderRadius: '16px', position: 'relative', overflow: 'hidden' }}>
@@ -941,7 +1059,7 @@ export default function Dashboard() {
                                 <div style={{ fontSize: '0.7rem', color: t.textMuted, marginBottom: '4px' }}>STATUS</div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#22c55e' }}>
                                   <span>🚀</span>
-                                  <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>Ready to run immediately</span>
+                                  <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>Orbis Sales Engine</span>
                                 </div>
                               </>
                             ) : (
@@ -1612,7 +1730,11 @@ export default function Dashboard() {
 
                             return (
                               <React.Fragment key={c.id}>
-                                <tr onClick={() => setExpandedLeadId(expandedLeadId === c.id ? null : c.id)} style={{ borderBottom: `1px solid ${t.borderSubtle}`, cursor: 'pointer', background: expandedLeadId === c.id ? (isDark ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.04)') : 'transparent', transition: 'background 0.2s' }} onMouseEnter={e => e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)'} onMouseLeave={e => e.currentTarget.style.background = expandedLeadId === c.id ? (isDark ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.04)') : 'transparent'}>
+                                <tr onClick={() => {
+                                   const isExpanding = expandedLeadId !== c.id;
+                                   setExpandedLeadId(isExpanding ? c.id : null);
+                                   if (isExpanding) setEditLeadData({ ...c });
+                                 }} style={{ borderBottom: `1px solid ${t.borderSubtle}`, cursor: 'pointer', background: expandedLeadId === c.id ? (isDark ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.04)') : 'transparent', transition: 'background 0.2s' }} onMouseEnter={e => e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)'} onMouseLeave={e => e.currentTarget.style.background = expandedLeadId === c.id ? (isDark ? 'rgba(99,102,241,0.08)' : 'rgba(99,102,241,0.04)') : 'transparent'}>
                                   <td style={{ padding: '16px 24px' }}>
                                     <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#818cf8', textDecoration: 'underline' }}>{c.name}</div>
                                     <div style={{ fontSize: '0.75rem', color: t.textSecondary }}>{c.website}</div>
@@ -1725,50 +1847,50 @@ export default function Dashboard() {
                                           </div>
                                         )}
 
-                                        {crmActiveTab === 'details' && (
+                                        {crmActiveTab === 'details' && editLeadData && (
                                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '24px' }}>
                                             <div>
                                               <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px' }}>Company Name</label>
-                                              <input type="text" defaultValue={c.name} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
+                                              <input type="text" value={editLeadData.name || ''} onChange={e => setEditLeadData({ ...editLeadData, name: e.target.value })} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
                                             </div>
                                             <div>
                                               <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px' }}>Website</label>
-                                              <input type="text" defaultValue={c.website} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
+                                              <input type="text" value={editLeadData.website || ''} onChange={e => setEditLeadData({ ...editLeadData, website: e.target.value })} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
                                             </div>
                                             <div>
                                               <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px' }}>Main Contact</label>
-                                              <input type="text" defaultValue={c.contact} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
+                                              <input type="text" value={editLeadData.contact || ''} onChange={e => setEditLeadData({ ...editLeadData, contact: e.target.value })} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
                                             </div>
                                             <div>
                                               <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px' }}>Email Address</label>
-                                              <input type="text" defaultValue={c.email} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
+                                              <input type="text" value={editLeadData.email || ''} onChange={e => setEditLeadData({ ...editLeadData, email: e.target.value })} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
                                             </div>
                                             <div>
                                               <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px' }}>Phone Number</label>
-                                              <input type="text" defaultValue={c.phone || ''} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
+                                              <input type="text" value={editLeadData.phone || ''} onChange={e => setEditLeadData({ ...editLeadData, phone: e.target.value })} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
                                             </div>
                                             <div>
                                               <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px' }}>Complete Address</label>
-                                              <input type="text" defaultValue={c.address || ''} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
+                                              <input type="text" value={editLeadData.address || ''} onChange={e => setEditLeadData({ ...editLeadData, address: e.target.value })} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
                                             </div>
                                             <div>
                                               <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px' }}>Google Business (GBP) Link</label>
-                                              <input type="text" defaultValue={c.gbpLink || ''} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
+                                              <input type="text" value={editLeadData.gbpLink || ''} onChange={e => setEditLeadData({ ...editLeadData, gbpLink: e.target.value })} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
                                             </div>
                                             <div>
                                               <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px' }}>Categories (comma separated)</label>
-                                              <input type="text" defaultValue={(c.categories || []).join(', ')} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
+                                              <input type="text" value={(editLeadData.categories || []).join(', ')} onChange={e => setEditLeadData({ ...editLeadData, categories: e.target.value.split(',').map(s => s.trim()) })} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
                                             </div>
                                             <div>
                                               <label style={{ display: 'block', fontSize: '0.75rem', color: t.textMuted, marginBottom: '8px' }}>Services (comma separated)</label>
-                                              <input type="text" defaultValue={(c.services || []).join(', ')} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
+                                              <input type="text" value={(editLeadData.services || []).join(', ')} onChange={e => setEditLeadData({ ...editLeadData, services: e.target.value.split(',').map(s => s.trim()) })} style={{ width: '100%', padding: '10px', background: t.bg, border: `1px solid ${t.borderSubtle}`, borderRadius: '8px', color: t.text }} />
                                             </div>
                                             <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' }}>
-                                              <button style={{ padding: '10px 24px', background: '#22c55e', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>Save Changes</button>
-                                              <button onClick={(e) => { e.stopPropagation(); handleDeleteLead(c.id); }} style={{ padding: '10px 16px', background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, transition: 'all 0.2s' }} onMouseEnter={e => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = '#fff'; }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#ef4444'; }}>
-                                                Delete Record
-                                              </button>
-                                            </div>
+                                                <button onClick={() => handleSaveLeadChanges(c.id)} style={{ padding: '10px 24px', background: '#22c55e', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>Save Changes</button>
+                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteLead(c.id); }} style={{ padding: '10px 16px', background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', borderRadius: '8px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, transition: 'all 0.2s' }} onMouseEnter={e => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = '#fff'; }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#ef4444'; }}>
+                                                  Delete Record
+                                                </button>
+                                              </div>
                                           </div>
                                         )}
                                       </div>

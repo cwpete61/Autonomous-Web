@@ -42,7 +42,11 @@ export class OrchestratorService {
             case 'BUILD_STARTED':
                 return AGENT_QUEUES.CONTENT;
             case 'REPLIED':
-                return AGENT_QUEUES.SALES_CLOSE; // Map to Close Agent (needs to be added)
+                return AGENT_QUEUES.SALES_CLOSE;
+            case 'DEMO_PENDING':
+                return AGENT_QUEUES.DEMO;
+            case 'REVIEW_PENDING':
+                return AGENT_QUEUES.CLIENT_SUCCESS;
             default:
                 this.logger.debug(`No automated queue routing defined for status: ${status}`);
                 return null;

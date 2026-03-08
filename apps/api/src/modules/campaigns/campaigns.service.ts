@@ -1,12 +1,17 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 import { CampaignStatus } from '@agency/db';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 
 @Injectable()
 export class CampaignsService {
-    constructor(private prisma: PrismaService) { }
+    constructor(
+        private prisma: PrismaService,
+        @InjectQueue('research-queue') private researchQueue: Queue
+    ) { }
 
     /** Create a new campaign and immediately return it. */
     async create(dto: CreateCampaignDto) {
@@ -62,10 +67,32 @@ export class CampaignsService {
 
     /** Transition campaign status (start / pause / complete). */
     async updateStatus(id: string, status: CampaignStatus) {
-        await this.findOne(id);
-        return this.prisma.campaign.update({
+        const campaign = await this.findOne(id);
+
+        const updated = await this.prisma.campaign.update({
             where: { id },
             data: { status, lastRunAt: status === CampaignStatus.ACTIVE ? new Date() : undefined },
         });
+
+        // If newly active, enqueue all leads who aren't already RESEARCHED or better
+        if (status === CampaignStatus.ACTIVE) {
+            const leads = await this.prisma.lead.findMany({
+                where: {
+                    campaignId: id,
+                    status: 'DISCOVERED'
+                },
+                include: { business: true }
+            });
+
+            for (const lead of leads) {
+                await this.researchQueue.add('research', lead, {
+                    attempts: 3,
+                    backoff: 5000,
+                    removeOnComplete: true
+                });
+            }
+        }
+
+        return updated;
     }
 }

@@ -466,34 +466,42 @@ export default function Dashboard() {
       console.error("Initialization Error:", err);
     }
 
-    // ─── Load API Keys from backend (source of truth) ────────────────
+    // ─── Load API Keys ──────────────────────────────────────────────
     const defaultKeys = {
       instantly: 'ZjJiYTgwM2ItNmViNi00YTE0LWFjMTYtNzIzODUwMTZiOTk5OlV2dVpyZ3F0aGxFSQ==',
       reoon: '7QCizxuc46xeOHJHk750EuC0IvSmI4mZ'
     };
 
-    // Apply localStorage cache immediately so the UI isn't blank on load
     const cachedKeys = localStorage.getItem('orbis_api_keys');
+    let initialKeys = { ...defaultKeys };
     if (cachedKeys) {
-      try { setApiKeys(JSON.parse(cachedKeys)); } catch (e) { /* ignore */ }
+      try { 
+        const parsed = JSON.parse(cachedKeys);
+        if (parsed && typeof parsed === 'object') initialKeys = { ...initialKeys, ...parsed };
+      } catch (e) { /* ignore */ }
     }
+    setApiKeys(initialKeys);
 
-    // Then fetch from the backend and override with authoritative values
-    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:40000'}/settings`)
+    // Fetch from backend and merge carefully
+    fetch(`${API_URL}/settings`)
       .then(r => r.ok ? r.json() : null)
       .then(serverSettings => {
-        if (serverSettings) {
-          // Pull only api_key_* prefixed entries
+        if (serverSettings && typeof serverSettings === 'object') {
           const serverKeys = Object.entries(serverSettings).reduce((acc, [k, v]) => {
-            if (k.startsWith('api_key_')) acc[k.replace('api_key_', '')] = v;
+            if (k.startsWith('api_key_') && v) acc[k.replace('api_key_', '')] = v;
             return acc;
           }, {});
-          const merged = { ...defaultKeys, ...serverKeys };
-          setApiKeys(merged);
-          localStorage.setItem('orbis_api_keys', JSON.stringify(merged));
-          // Also push defaults to server if this is first boot
-          if (Object.keys(serverKeys).length === 0) {
-            fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:40000'}/settings`, {
+          
+          setApiKeys(prev => {
+            const merged = { ...prev, ...serverKeys };
+            localStorage.setItem('orbis_api_keys', JSON.stringify(merged));
+            return merged;
+          });
+
+          // Also push defaults to server if this is first boot and server is empty
+          const hasKeys = Object.keys(serverSettings).some(k => k.startsWith('api_key_'));
+          if (!hasKeys) {
+            fetch(`${API_URL}/settings`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -502,16 +510,9 @@ export default function Dashboard() {
               }),
             }).catch(() => {});
           }
-        } else {
-          // Fallback: server unreachable, use defaults + cache
-          const fallback = { ...defaultKeys, ...(cachedKeys ? JSON.parse(cachedKeys) : {}) };
-          setApiKeys(fallback);
         }
       })
-      .catch(() => {
-        const fallback = { ...defaultKeys, ...(cachedKeys ? JSON.parse(cachedKeys) : {}) };
-        setApiKeys(fallback);
-      });
+      .catch(err => console.error("API Key Sync Error:", err));
 
     const savedModels = localStorage.getItem('orbis_api_models');
     if (savedModels) {

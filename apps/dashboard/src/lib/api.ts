@@ -3,6 +3,13 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:40000'
 export async function apiFetch(endpoint: string, options: RequestInit = {}) {
     // Add auth token if available
     const token = typeof window !== 'undefined' ? localStorage.getItem('orbis_token') : null;
+    const masterSync = typeof window !== 'undefined' ? localStorage.getItem('orbis_master_sync') : 'true';
+
+    if (masterSync === 'false') {
+        const err = new Error('Master Sync is Offline');
+        (err as any).isOffline = true;
+        throw err;
+    }
 
     const headers = {
         'Content-Type': 'application/json',
@@ -67,6 +74,21 @@ export const incidentsApi = {
     list: () => apiFetch('/incidents'),
 };
 
-export const metricsApi = {
-    getOverview: () => apiFetch('/maintenance/metrics'), // Placeholder if exists
+export const settingsApi = {
+    get: () => apiFetch('/settings'),
+    update: (data: any) => apiFetch('/settings', { method: 'PUT', body: JSON.stringify(data) }),
+};
+
+export const diagnosticsApi = {
+    runWorkflowTest: (url: string) => apiFetch('/diagnostics/workflow-test', {
+        method: 'POST',
+        body: JSON.stringify({ url })
+    }),
+};
+
+export const aiApi = {
+    generateEmails: (data: any) => apiFetch('/ai/generate-emails', {
+        method: 'POST',
+        body: JSON.stringify(data)
+    }),
 };

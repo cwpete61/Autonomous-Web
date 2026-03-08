@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { campaignsApi, leadsApi, emailSequencesApi, agentsApi } from './src/lib/api';
+import { campaignsApi, leadsApi, emailSequencesApi, agentsApi, settingsApi, diagnosticsApi, aiApi } from './src/lib/api';
 
 const PIPELINE_STAGES = [
   { id: 'lead_inbox', label: 'Lead Inbox', color: '#94a3b8' },
@@ -355,6 +355,7 @@ export default function Dashboard() {
     openai: 'gpt-4o',
     claude: 'claude-3-5-sonnet'
   });
+  const [masterConnect, setMasterConnect] = useState(true);
 
   // ─── Email Sequences State ────────────────────────────────────────
   const blankEmailStep = (step) => ({ step, subject: '', body: '', delayDays: step === 1 ? 0 : 3 });
@@ -383,6 +384,7 @@ export default function Dashboard() {
     setHasMounted(true);
 
     async function fetchData() {
+        if (typeof window !== 'undefined' && localStorage.getItem('orbis_master_sync') === 'false') return;
         try {
             const [cData, lData, sData] = await Promise.all([
                 campaignsApi.list(),
@@ -401,6 +403,7 @@ export default function Dashboard() {
 
     // Agent status polling
     const pollInterval = setInterval(async () => {
+        if (typeof window !== 'undefined' && localStorage.getItem('orbis_master_sync') === 'false') return;
         try {
             const agentsData = await agentsApi.list();
             if (agentsData && typeof agentsData === 'object') {
@@ -461,6 +464,9 @@ export default function Dashboard() {
             if (parsed && typeof parsed === 'object') setApiToggles(parsed);
           } catch (e) { console.error("Error parsing api toggles:", e); }
         }
+
+        const savedMasterSync = localStorage.getItem('orbis_master_sync');
+        if (savedMasterSync !== null) setMasterConnect(savedMasterSync !== 'false');
       }
     } catch (err) {
       console.error("Initialization Error:", err);
@@ -483,36 +489,35 @@ export default function Dashboard() {
     setApiKeys(initialKeys);
 
     // Fetch from backend and merge carefully
-    fetch(`${API_URL}/settings`)
-      .then(r => r.ok ? r.json() : null)
-      .then(serverSettings => {
-        if (serverSettings && typeof serverSettings === 'object') {
-          const serverKeys = Object.entries(serverSettings).reduce((acc, [k, v]) => {
-            if (k.startsWith('api_key_') && v) acc[k.replace('api_key_', '')] = v;
-            return acc;
-          }, {});
-          
-          setApiKeys(prev => {
-            const merged = { ...prev, ...serverKeys };
-            localStorage.setItem('orbis_api_keys', JSON.stringify(merged));
-            return merged;
-          });
+    if (localStorage.getItem('orbis_master_sync') !== 'false') {
+      settingsApi.get()
+        .then(serverSettings => {
+          if (serverSettings && typeof serverSettings === 'object') {
+            const serverKeys = Object.entries(serverSettings).reduce((acc, [k, v]) => {
+              if (k.startsWith('api_key_') && v) acc[k.replace('api_key_', '')] = v;
+              return acc;
+            }, {});
+            
+            setApiKeys(prev => {
+              const merged = { ...prev, ...serverKeys };
+              localStorage.setItem('orbis_api_keys', JSON.stringify(merged));
+              return merged;
+            });
 
-          // Also push defaults to server if this is first boot and server is empty
-          const hasKeys = Object.keys(serverSettings).some(k => k.startsWith('api_key_'));
-          if (!hasKeys) {
-            fetch(`${API_URL}/settings`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                api_key_instantly: defaultKeys.instantly,
-                api_key_reoon: defaultKeys.reoon,
-              }),
-            }).catch(() => {});
+            // Also push defaults to server if this is first boot and server is empty
+            const hasKeys = Object.keys(serverSettings).some(k => k.startsWith('api_key_'));
+            if (!hasKeys) {
+              settingsApi.update({
+                  api_key_instantly: defaultKeys.instantly,
+                  api_key_reoon: defaultKeys.reoon,
+              }).catch(() => {});
+            }
           }
-        }
-      })
-      .catch(err => console.error("API Key Sync Error:", err));
+        })
+        .catch(err => {
+          if (!err.isOffline) console.error("API Key Sync Error:", err);
+        });
+    }
 
     const savedModels = localStorage.getItem('orbis_api_models');
     if (savedModels) {
@@ -528,11 +533,12 @@ export default function Dashboard() {
       // 1. Update localStorage cache immediately
       localStorage.setItem('orbis_api_keys', JSON.stringify(next));
       // 2. Persist to backend (source of truth)
-      fetch(`${API_URL}/settings`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [`api_key_${id}`]: key }),
-      }).catch(err => console.error('Failed to persist API key to backend:', err));
+      if (localStorage.getItem('orbis_master_sync') !== 'false') {
+        settingsApi.update({ [`api_key_${id}`]: key })
+          .catch(err => {
+            if (!err.isOffline) console.error('Failed to persist API key to backend:', err);
+          });
+      }
       return next;
     });
     alert(`${API_COST_MODELS[id].name} key saved successfully!`);
@@ -582,6 +588,14 @@ export default function Dashboard() {
     });
   };
 
+  const handleToggleMasterConnect = () => {
+    setMasterConnect(prev => {
+      const next = !prev;
+      localStorage.setItem('orbis_master_sync', next ? 'true' : 'false');
+      return next;
+    });
+  };
+
   const handleToggleApi = (id) => {
     setApiToggles(prev => {
       const nextValue = !prev?.[id];
@@ -589,11 +603,12 @@ export default function Dashboard() {
       localStorage.setItem('orbis_api_toggles', JSON.stringify(next));
       
       // Persist to backend
-      fetch(`${API_URL}/settings`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [`api_active_${id}`]: nextValue ? 'true' : 'false' }),
-      }).catch(err => console.error('Failed to persist API toggle to backend:', err));
+      if (localStorage.getItem('orbis_master_sync') !== 'false') {
+        settingsApi.update({ [`api_active_${id}`]: nextValue ? 'true' : 'false' })
+          .catch(err => {
+            if (!err.isOffline) console.error('Failed to persist API toggle to backend:', err);
+          });
+      }
       
       return next;
     });
@@ -621,24 +636,19 @@ export default function Dashboard() {
     if (!workflowTestUrl) return;
     setIsWorkflowTesting(true);
     try {
-        const response = await fetch(`${API_URL}/diagnostics/workflow-test`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('orbis_token')}`
-            },
-            body: JSON.stringify({ url: workflowTestUrl })
-        });
-        if (response.ok) {
-            alert('Workflow Test Started! Head over to the AGENTS tab to watch the Scout Agent in action.');
-            setWorkflowTestUrl('');
-            setIsWorkflowTestAccordionOpen(false);
-        } else {
-            alert('Failed to start workflow test. Check if you are logged in correctly.');
+        if (localStorage.getItem('orbis_master_sync') === 'false') {
+          alert('Cannot start test while Master Sync is Offline.');
+          return;
         }
+        await diagnosticsApi.runWorkflowTest(workflowTestUrl);
+        alert('Workflow Test Started! Head over to the AGENTS tab to watch the Scout Agent in action.');
+        setWorkflowTestUrl('');
+        setIsWorkflowTestAccordionOpen(false);
     } catch (err) {
-        console.error("Workflow Test Error:", err);
-        alert('Error starting diagnostic.');
+        if (!err.isOffline) {
+          console.error("Workflow Test Error:", err);
+          alert('Error starting diagnostic.');
+        }
     } finally {
         setIsWorkflowTesting(false);
     }
@@ -982,16 +992,14 @@ export default function Dashboard() {
   };
 
   const generateEmailsWithAI = async () => {
+    if (localStorage.getItem('orbis_master_sync') === 'false') {
+      alert('Cannot generate emails while Master Sync is Offline.');
+      return;
+    }
     setAiGenerating(true);
     setAiGenError(null);
     try {
-      const res = await fetch(`${API_URL}/ai/generate-emails`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...aiInputs, step_count: newSequence.steps }),
-      });
-      if (!res.ok) throw new Error(`API error ${res.status}`);
-      const data = await res.json();
+      const data = await aiApi.generateEmails({ ...aiInputs, step_count: newSequence.steps });
       setNewSequence(s => ({
         ...s,
         emails: s.emails.map((e, i) => {
@@ -1000,7 +1008,9 @@ export default function Dashboard() {
         }),
       }));
     } catch (err) {
-      setAiGenError(err.message || 'Generation failed. Check ANTHROPIC_API_KEY in API settings.');
+      if (!err.isOffline) {
+        setAiGenError(err.message || 'Generation failed. Check ANTHROPIC_API_KEY in API settings.');
+      }
     } finally {
       setAiGenerating(false);
     }
@@ -1228,6 +1238,24 @@ export default function Dashboard() {
               {view.toUpperCase()}
             </button>
           ))}
+          <button 
+            onClick={handleToggleMasterConnect} 
+            title={masterConnect ? "Master Sync: Online" : "Master Sync: Offline"}
+            style={{ 
+              padding: 'clamp(6px, 0.7vw, 10px)', 
+              borderRadius: '8px', 
+              border: 'none', 
+              background: masterConnect ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', 
+              cursor: 'pointer', 
+              fontSize: 'clamp(1rem, 1.2vw, 1.4rem)',
+              transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            {masterConnect ? '🔗' : '🔌'}
+          </button>
           <button onClick={toggleTheme} style={{ padding: 'clamp(6px, 0.7vw, 10px)', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 'clamp(1rem, 1.2vw, 1.4rem)' }}>{isDark ? '☀️' : '🌙'}</button>
         </div>
       </header>

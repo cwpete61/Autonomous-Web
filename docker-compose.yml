@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/dashboard.Dockerfile
+    restart: unless-stopped
     env_file: .env
     ports:
       - "${DASHBOARD_PORT:-30000}:3000"
@@ -20,6 +21,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/marketing.Dockerfile
+    restart: unless-stopped
     ports:
       - "${MARKETING_PORT:-20000}:3001"
     healthcheck:
@@ -33,6 +35,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/api.Dockerfile
+    restart: unless-stopped
     env_file: .env
     ports:
       - "${API_PORT:-40000}:${API_PORT:-40000}"
@@ -56,6 +59,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/workers.Dockerfile
+    restart: unless-stopped
     env_file: .env
     ports:
       - "${WORKERS_PORT:-44444}:${WORKERS_PORT:-44444}"
@@ -79,6 +83,7 @@ services:
 
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-agency}
       POSTGRES_USER: ${POSTGRES_USER:-agency}
@@ -97,6 +102,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -111,6 +117,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/nginx.Dockerfile
+    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
@@ -124,6 +131,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/backup-runner.Dockerfile
+    restart: unless-stopped
     env_file: .env
     volumes:
       - ./backups:/app/backups

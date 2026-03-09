@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Containerized Multi-Agent Platform for Lead Generation, Outreach, Sales, Fulfillment, Content, Reliability, and Client Operations",
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --concurrency 50",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test",
@@ -24,9 +24,12 @@
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
-    "turbo": "^2.0.0",
     "prettier": "^3.0.0",
-    "typescript": "^5.4.0"
+    "ts-loader": "^9.5.4",
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0",
+    "webpack": "^5.105.4",
+    "webpack-node-externals": "^3.0.0"
   },
   "packageManager": "pnpm@9.0.0",
   "engines": {

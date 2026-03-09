@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "nest start --watch",
     "build": "nest build",
-    "start": "node dist/main.js",
-    "start:prod": "node dist/main.js",
+    "start": "node dist/apps/workers/src/main",
+    "start:prod": "node dist/apps/workers/src/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "jest",

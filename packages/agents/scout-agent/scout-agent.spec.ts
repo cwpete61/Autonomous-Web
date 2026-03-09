@@ -25,25 +25,27 @@ describe('ScoutAgent — computeQualityScore()', () => {
     // PageSpeed: 20 -> 80 badness
     // GTMetrix: 40 -> 60 badness
     // Pingdom: 60 -> 40 badness
+    // Max Tech Badness: 80
     // Avg Tech Badness: (80 + 60 + 40) / 3 = 60
-    // Final score: (50 + 60) / 2 = 55
+    // Weighted Tech Badness: (80 * 0.6) + (60 * 0.4) = 72
+    // Final score: Math.round((50 * 0.4) + (72 * 0.6)) = 63
     const analysis = { qualityScore: 50 };
     const pagespeed = { score: 20 };
     const gtmetrix = { score: 40 };
     const pingdom = { score: 60 };
     const score = agent.computeQualityScore({}, pagespeed, analysis, gtmetrix, pingdom);
-    expect(score).toBe(55);
+    expect(score).toBe(63);
   });
 
   it('should handle partial technical data correctly', () => {
     // Claude score (badness) = 50
     // GTMetrix: 30 -> 70 badness
-    // Avg Tech Badness: 70
-    // Final score: (50 + 70) / 2 = 60
+    // Weighted Tech Badness: 70
+    // Final score: Math.round((50 * 0.4) + (70 * 0.6)) = 62
     const analysis = { qualityScore: 50 };
     const gtmetrix = { score: 30 };
     const score = agent.computeQualityScore({}, null, analysis, gtmetrix, null);
-    expect(score).toBe(60);
+    expect(score).toBe(62);
   });
 
   it('should handle high performance scores across all metrics', () => {
@@ -51,14 +53,16 @@ describe('ScoutAgent — computeQualityScore()', () => {
     // PS: 90 -> 10 badness
     // GTMetrix: 95 -> 5 badness
     // Pingdom: 100 -> 0 badness
-    // Avg Tech Badness: (10 + 5 + 0) / 3 = 5
-    // Final score: (50 + 5) / 2 = 27.5 -> 28
+    // Max Tech Badness: 10
+    // Avg Tech Badness: 5
+    // Weighted Tech Badness: (10 * 0.6) + (5 * 0.4) = 8
+    // Final score: Math.round((50 * 0.4) + (8 * 0.6)) = 25
     const analysis = { qualityScore: 50 };
     const pagespeed = { score: 90 };
     const gtmetrix = { score: 95 };
     const pingdom = { score: 100 };
     const score = agent.computeQualityScore({}, pagespeed, analysis, gtmetrix, pingdom);
-    expect(score).toBe(28);
+    expect(score).toBe(25);
   });
 
   it('should clamp the score between 0 and 100', () => {

@@ -1,0 +1,813 @@
+Build a functional web app that reproduces the core behavior of https://searchqualityrater.com/ but with no styling emphasis. Use plain, clean HTML structure and minimal default browser styling only. Do not spend time on visual design, animations, gradients, shadows, rounded UI polish, or branding. Focus on logic, structure, scoring, and output.
+
+## Goal
+Create a tool called **Search Quality Rater Score** that lets a user enter a URL, analyzes the page against a rubric modeled on Google's Search Quality Evaluator Guidelines, and returns:
+- an overall score out of 100
+- category-level scores
+- pass/fail or scored checks under each category
+- concise explanations for each check
+- actionable recommendations
+- a structured final summary
+
+## Core Functionality
+The app must support these flows:
+
+### 1. URL Input
+- Single text input for a URL
+- Button: `Analyze URL`
+- Validate URL format before submission
+- Show error states for:
+  - invalid URL
+  - unreachable page
+  - timeout
+  - blocked scraping/fetching
+  - missing content
+- Disable submit while analysis is running
+- Show loading state with progress text
+
+### 2. Page Retrieval
+Fetch and parse the target page content server-side.
+Extract at minimum:
+- title
+- meta description
+- canonical
+- headings
+- visible body text
+- author/byline if present
+- publish/update dates if present
+- internal links
+- external links
+- structured data if present
+- contact/about/editorial/review policy signals if present
+- YMYL indicators
+- trust/reputation indicators found on-page
+
+If full scraping is blocked, still return a partial analysis and clearly mark which checks were skipped.
+
+### 3. Scoring Rubric
+Implement these categories and weights exactly:
+
+- Page Purpose & Intent — 10 points — 3 checks
+- E-E-A-T (Experience, Expertise, Authoritativeness, Trust) — 25 points — 4 checks
+- Main Content Quality — 25 points — 5 checks
+- Author & Website Information — 15 points — 4 checks
+- YMYL Standards (if applicable) — 10 points — 2 checks
+- Reputation Signals — 10 points — 3 checks
+- Content Safety & Harm — 5 points — 2 checks
+
+Total:
+- 23 checks
+- 100 maximum points
+
+## Required Check Structure
+Each check must include:
+- `id`
+- `category`
+- `name`
+- `maxPoints`
+- `score`
+- `status` (`pass`, `partial`, `fail`, `not_applicable`, `unable_to_verify`)
+- `reason`
+- `evidence`
+- `recommendation`
+
+## Suggested Checks By Category
+
+### Page Purpose & Intent (10 points, 3 checks)
+1. Clear beneficial purpose
+2. Primary topic clarity and search intent match
+3. No deceptive or manipulative intent
+
+### E-E-A-T (25 points, 4 checks)
+1. Evidence of first-hand experience or subject familiarity
+2. Evidence of expertise
+3. Authority signals related to topic/site
+4. Trust signals such as transparency, sourcing, policies, accuracy cues
+
+### Main Content Quality (25 points, 5 checks)
+1. Main content is substantial
+2. Originality or added value
+3. Clarity, effort, and depth
+4. Heading structure and information organization
+5. Supporting evidence, examples, or citations where appropriate
+
+### Author & Website Information (15 points, 4 checks)
+1. Author identified
+2. Website/operator identity is clear
+3. Contact/about/help information exists
+4. Editorial, medical, legal, or review accountability signals where relevant
+
+### YMYL Standards (10 points, 2 checks)
+Only score these if the page is YMYL. Otherwise mark as `not_applicable`.
+1. Higher trust threshold met for YMYL content
+2. Claims are responsibly framed with appropriate sourcing/disclaimers
+
+### Reputation Signals (10 points, 3 checks)
+1. On-page reputation or credibility indicators
+2. References to awards, credentials, affiliations, or third-party validation
+3. Brand/site consistency and legitimacy indicators
+
+### Content Safety & Harm (5 points, 2 checks)
+1. No obvious harmful, misleading, or dangerous framing
+2. No spammy, manipulative, or malicious content patterns
+
+## YMYL Logic
+Create detection logic to classify a page as probable YMYL if it concerns:
+- health
+- medical advice
+- finance
+- legal
+- safety
+- civics
+- major life decisions
+- news with serious consequence
+- ecommerce pages involving important purchases
+
+If the page is not YMYL:
+- exclude YMYL points from penalty
+- mark category as `not_applicable`
+- keep total overall score normalized to 100 by redistributing or scaling properly
+- clearly explain the normalization method in the result
+
+## Scoring Rules
+- Each category has fixed maximum points
+- Each check contributes a portion of that category score
+- Partial credit is allowed
+- Final score must be deterministic and transparent
+- Show both:
+  - raw category totals
+  - weighted total score out of 100
+
+Also assign a rating label:
+- 90–100: Excellent
+- 75–89: Strong
+- 60–74: Moderate
+- 40–59: Weak
+- 0–39: Poor
+
+## Output UI Requirements
+Use a plain functional layout with semantic HTML and simple sections.
+
+### Top Section
+- App title: `Search Quality Rater Score`
+- Short description
+- URL input
+- Analyze button
+
+### Results Section
+After analysis, show:
+
+#### Summary Panel
+- analyzed URL
+- page title
+- overall score /100
+- rating label
+- whether page appears to be YMYL
+- analysis timestamp
+
+#### Category Breakdown
+For each category show:
+- category name
+- score earned
+- maximum points
+- number of checks
+- short category summary
+
+#### Detailed Checks
+For every check show:
+- check name
+- status
+- score
+- reason
+- evidence
+- recommendation
+
+#### Final Recommendations
+Group recommendations by priority:
+- Critical
+- Important
+- Nice to have
+
+#### Extracted Signals
+Show a debug/details section for:
+- title
+- meta description
+- author
+- dates
+- headings
+- schema types found
+- contact/about links found
+- trust indicators found
+- detected YMYL topic
+
+## Technical Requirements
+Build this as a production-ready app with separation of concerns.
+
+### Recommended Stack
+- Next.js App Router
+- TypeScript
+- Server routes for analysis
+- `fetch` or approved scraping approach
+- HTML parsing library such as Cheerio
+- Zod for input validation
+- Clear modular scoring engine
+
+### File Structure
+Create something close to:
+
+- `/app/page.tsx`
+- `/app/api/analyze/route.ts`
+- `/lib/analyzer/fetchPage.ts`
+- `/lib/analyzer/extractContent.ts`
+- `/lib/analyzer/detectYMYL.ts`
+- `/lib/scoring/rubric.ts`
+- `/lib/scoring/scorePage.ts`
+- `/lib/types.ts`
+- `/components/UrlForm.tsx`
+- `/components/ScoreSummary.tsx`
+- `/components/CategoryBreakdown.tsx`
+- `/components/CheckList.tsx`
+- `/components/Recommendations.tsx`
+
+## Data Types
+Define strong TypeScript types for:
+- extracted page data
+- category score
+- check result
+- final report
+- YMYL classification
+
+## Important Behavior
+- Do not clone the design or branding of the source website
+- Reproduce functionality only
+- Keep the interface plain and unstyled
+- Use accessible labels and semantic markup
+- Code should be easy to extend later
+- Add mock fallback analysis so the interface can still be tested if live fetch fails
+- Include comments where logic is non-obvious
+
+## Deliverables
+Generate:
+1. full app code
+2. scoring rubric implementation
+3. URL analysis API route
+4. plain frontend to submit and display results
+5. sample mocked analysis JSON for testing
+6. clear instructions to run locally
+
+## Final Instruction
+Prioritize working logic over appearance. The output should feel like an internal evaluator tool, not a marketing site.
+
+If you want, I can also 
+convert this into a stricter Antigravity build brief with:
+
+exact acceptance criteria
+
+JSON schema for the analysis response
+
+deterministic scoring formulas
+
+a phased build order for agent execution
+
+Convert this into a stricter Antigravity build brief
+
+Search Quality Rater Analyzer — Antigravity Build Brief
+
+Project Brief
+
+Search Quality Rater Analyzer is a deterministic analysis engine that evaluates a webpage against a structured rubric derived from Google Search Quality Evaluator Guidelines.
+
+The system must:
+
+Accept a URL
+
+Retrieve and parse the page
+
+Run a deterministic set of evaluation checks
+
+Assign weighted scores
+
+Generate a structured report
+
+Return results through an API and simple interface
+
+This build focuses strictly on functionality and scoring logic.
+Do not implement UI styling, branding, gradients, shadows, animations, or visual polish.
+
+Primary System Goal
+
+Produce a transparent scoring engine that evaluates a webpage and returns:
+
+total score out of 100
+
+category scores
+
+individual check scores
+
+evidence used for scoring
+
+recommendations for improvement
+
+YMYL classification
+
+extracted page signals
+
+The system must be explainable and deterministic.
+
+Functional Requirements
+FR-1 URL Submission
+
+The application must provide a URL input interface.
+
+Requirements:
+
+validate URL format
+
+reject invalid protocol
+
+accept http and https
+
+prevent duplicate submissions
+
+disable submit during analysis
+
+Error states must include:
+
+invalid URL
+
+page unreachable
+
+request timeout
+
+blocked fetch
+
+empty content response
+
+FR-2 Page Retrieval
+
+The system must retrieve the page HTML server-side.
+
+The retrieval module must:
+
+fetch HTML
+
+follow redirects
+
+respect timeout limits
+
+return structured HTML
+
+Timeout limit:
+
+10 seconds
+
+User agent must simulate a browser.
+
+FR-3 HTML Parsing
+
+After retrieval, the parser must extract:
+
+Required fields:
+
+title
+meta description
+canonical
+author
+publish date
+updated date
+h1
+h2
+h3
+body text
+internal links
+external links
+schema types
+contact/about links
+
+Optional signals:
+
+policy links
+editorial statements
+review signals
+citation links
+credential mentions
+
+The parser must normalize text by:
+
+removing script
+removing style
+removing navigation
+removing footer boilerplate
+
+Return structured content object.
+
+Evaluation Rubric
+
+Total score:
+
+100 points
+
+Total checks:
+
+23
+
+Categories and weights:
+
+Category	Checks	Points
+Page Purpose & Intent	3	10
+E-E-A-T	4	25
+Main Content Quality	5	25
+Author & Website Info	4	15
+YMYL Standards	2	10
+Reputation Signals	3	10
+Content Safety	2	5
+Check Structure
+
+Each check must return the following structure:
+
+type CheckResult = {
+  id: string
+  category: string
+  name: string
+  maxPoints: number
+  score: number
+  status: "pass" | "partial" | "fail" | "not_applicable" | "unable_to_verify"
+  reason: string
+  evidence: string[]
+  recommendation: string
+}
+Category Definitions
+Category 1 — Page Purpose & Intent
+
+Max score:
+
+10
+
+Checks:
+
+Beneficial purpose clarity
+
+Topic focus and search intent alignment
+
+Absence of deceptive intent
+
+Signals used:
+
+title
+h1
+meta description
+intro paragraphs
+Category 2 — E-E-A-T
+
+Max score:
+
+25
+
+Checks:
+
+Experience signals
+
+Expertise indicators
+
+Authority indicators
+
+Trust indicators
+
+Signals used:
+
+author presence
+credential references
+citations
+external references
+organization info
+Category 3 — Main Content Quality
+
+Max score:
+
+25
+
+Checks:
+
+Content depth
+
+Originality indicators
+
+Structural organization
+
+Heading hierarchy
+
+Supporting evidence
+
+Signals used:
+
+word count
+heading structure
+paragraph complexity
+citation presence
+media references
+Category 4 — Author & Website Information
+
+Max score:
+
+15
+
+Checks:
+
+Author identity
+
+Organization identity
+
+Contact or about page presence
+
+Editorial transparency
+
+Signals used:
+
+author tag
+about links
+contact links
+organization schema
+Category 5 — YMYL Standards
+
+Max score:
+
+10
+
+Checks:
+
+Higher trust requirement satisfied
+
+Responsible claim framing
+
+These checks only apply if the page is classified as YMYL.
+
+Otherwise mark:
+
+status: not_applicable
+Category 6 — Reputation Signals
+
+Max score:
+
+10
+
+Checks:
+
+Reputation mentions
+
+Credential signals
+
+Brand legitimacy indicators
+
+Signals:
+
+awards
+certifications
+affiliations
+recognition mentions
+Category 7 — Content Safety
+
+Max score:
+
+5
+
+Checks:
+
+Harmful or misleading content detection
+
+Spam or manipulation indicators
+
+Signals:
+
+sensational claims
+keyword stuffing
+spam patterns
+YMYL Classification
+
+A page is classified as YMYL if it contains signals related to:
+
+health
+medical
+finance
+legal
+safety
+civic information
+major life decisions
+
+Classification must rely on keyword clusters and entity detection.
+
+Example trigger phrases:
+
+treatment
+investment
+tax
+legal advice
+loan
+mortgage
+symptoms
+diagnosis
+YMYL Scoring Rule
+
+If page is not YMYL:
+
+YMYL category = not_applicable
+
+The scoring engine must normalize final score to 100.
+
+Normalization formula:
+
+normalizedScore =
+(totalEarnedPoints / totalPossiblePointsWithoutYMYL) * 100
+Score Labels
+
+The system must assign a rating label.
+
+Score	Label
+90–100	Excellent
+75–89	Strong
+60–74	Moderate
+40–59	Weak
+0–39	Poor
+API Requirements
+
+Create API endpoint:
+
+POST /api/analyze
+
+Request body:
+
+{
+  "url": "https://example.com/article"
+}
+
+Response schema:
+
+{
+  "url": "",
+  "pageTitle": "",
+  "timestamp": "",
+  "isYMYL": false,
+  "overallScore": 0,
+  "ratingLabel": "",
+  "categoryScores": [],
+  "checks": [],
+  "recommendations": [],
+  "extractedSignals": {}
+}
+Extracted Signals Object
+
+Must contain:
+
+title
+metaDescription
+author
+publishDate
+updatedDate
+h1
+headings
+internalLinks
+externalLinks
+schemaTypes
+contactLinks
+aboutLinks
+trustSignals
+Recommendations Engine
+
+Recommendations must be generated from failed checks.
+
+Severity levels:
+
+critical
+important
+minor
+
+Each recommendation must contain:
+
+issue
+explanation
+suggested fix
+priority
+Frontend Interface
+
+The interface must contain only three components.
+
+URL Form
+
+Elements:
+
+URL input
+Analyze button
+error message area
+Score Summary
+
+Displays:
+
+URL
+page title
+overall score
+rating label
+YMYL classification
+timestamp
+Category Results
+
+For each category:
+
+category name
+score
+max score
+checks list
+
+Each check displays:
+
+name
+status
+score
+reason
+recommendation
+Technical Stack
+
+Use:
+
+Next.js (App Router)
+TypeScript
+Cheerio for HTML parsing
+Zod for validation
+Required Directory Structure
+/app
+/app/page.tsx
+/app/api/analyze/route.ts
+
+/lib
+/lib/analyzer/fetchPage.ts
+/lib/analyzer/extractContent.ts
+/lib/analyzer/detectYMYL.ts
+
+/lib/scoring
+/lib/scoring/rubric.ts
+/lib/scoring/scorePage.ts
+
+/lib/types.ts
+
+/components
+/components/UrlForm.tsx
+/components/ScoreSummary.tsx
+/components/CategoryBreakdown.tsx
+/components/CheckList.tsx
+/components/Recommendations.tsx
+Acceptance Criteria
+
+The system is considered complete when:
+
+A URL can be submitted
+
+The page is fetched and parsed
+
+23 evaluation checks execute
+
+A deterministic score is produced
+
+Category scores sum correctly
+
+Non-YMYL pages normalize score correctly
+
+API returns structured JSON
+
+Results render in UI
+
+Development Phases
+Phase 1
+
+URL input
+API endpoint
+page retrieval
+
+Phase 2
+
+HTML parsing
+content extraction
+
+Phase 3
+
+scoring engine
+rubric checks
+
+Phase 4
+
+YMYL detection
+score normalization
+
+Phase 5
+
+frontend output
+recommendation engine
+
+Non-Goals
+
+Do not implement:
+
+visual styling
+branding
+animations
+dark mode
+CSS frameworks
+SEO landing page
+marketing content

@@ -16,19 +16,13 @@
     "noImplicitAny": true,
     "strictBindCallApply": true,
     "forceConsistentCasingInFileNames": true,
-    "noFallthroughCasesInSwitch": true,
-    "paths": {
-      "@agency/db": ["../../packages/db"],
-      "@agency/types": ["../../packages/types/src"],
-      "@agency/logger": ["../../packages/logger/src"],
-      "@agency/config": ["../../packages/config/src"],
-      "@agency/events": ["../../packages/events/src"],
-      "@agency/utils": ["../../packages/utils/src"],
-      "@agency/orchestrator": ["../../packages/orchestrator/src"]
-    }
+    "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }
-
-
